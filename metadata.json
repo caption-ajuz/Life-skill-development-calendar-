@@ -1,0 +1,8 @@
+{
+  "name": "Life Skill Course",
+  "description": "Life Skill Course - Calendar Camp Management System for distributions, stock tracking, collections, and team management.",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

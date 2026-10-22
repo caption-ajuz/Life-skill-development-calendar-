@@ -1,0 +1,13 @@
+{
+  "name": "Life Skill Course",
+  "short_name": "Life Skill",
+  "description": "Calendar Camp Management - Markazul Hidayathil Islamiyya",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#0891b2",
+  "orientation": "portrait-primary",
+  "icons": [
+    { "src": "/logo.jpg", "sizes": "512x512", "type": "image/jpeg", "purpose": "any" }
+  ]
+}
