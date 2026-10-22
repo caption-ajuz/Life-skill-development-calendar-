@@ -331,11 +331,25 @@ export function mockFallbackMiddleware(req, res, next) {
       } else if (cleanPin === '4444') {
         user = mockStore.users.find(u => u.role === 'team_member') || mockStore.users[3];
       } else {
-        // Find user by custom pin or fallback
-        user = mockStore.users.find(u => u.pin === cleanPin) || mockStore.users[0];
+        // Find user by custom pin
+        user = mockStore.users.find(u => u.pinHint === cleanPin);
+      }
+
+      if (!user) {
+        return res.status(401).json({
+          success: false,
+          error: 'Invalid PIN. Try 1111 for Admin, 2222 for Usthad, 3333 for Leader, 4444 for Member.'
+        });
       }
     } else {
-      user = mockStore.users.find(u => u.username === (username || '').toLowerCase().trim()) || mockStore.users[0];
+      const searchName = (username || '').toLowerCase().trim();
+      user = mockStore.users.find(u => u.username === searchName);
+      if (!user) {
+        return res.status(401).json({
+          success: false,
+          error: 'Invalid username or password.'
+        });
+      }
     }
 
     const token = jwt.sign(

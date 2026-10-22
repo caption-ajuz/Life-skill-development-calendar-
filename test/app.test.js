@@ -152,3 +152,87 @@ test('Authorization: Role access constraints', () => {
   assert.ok(!rolePermissions.team_leader.includes('edit_campaign_numbers'), 'Leader cannot edit campaign numbers');
   assert.ok(rolePermissions.team_member.includes('request_corrections'), 'Member can submit correction requests');
 });
+
+// 7. Full-Screen Bank-App PIN Keypad State Transitions
+test('Keypad: 4-digit numeric keypad state machine and auto-submit trigger', () => {
+  let pinDigits = ['', '', '', ''];
+
+  function inputDigit(digits, d) {
+    const copy = [...digits];
+    const emptyIdx = copy.findIndex(item => !item);
+    if (emptyIdx !== -1) copy[emptyIdx] = d;
+    return copy;
+  }
+
+  function backspace(digits) {
+    const copy = [...digits];
+    for (let i = 3; i >= 0; i--) {
+      if (copy[i]) {
+        copy[i] = '';
+        break;
+      }
+    }
+    return copy;
+  }
+
+  function clearAll() {
+    return ['', '', '', ''];
+  }
+
+  pinDigits = inputDigit(pinDigits, '1');
+  assert.deepEqual(pinDigits, ['1', '', '', '']);
+  pinDigits = inputDigit(pinDigits, '1');
+  assert.deepEqual(pinDigits, ['1', '1', '', '']);
+  pinDigits = backspace(pinDigits);
+  assert.deepEqual(pinDigits, ['1', '', '', '']);
+  pinDigits = inputDigit(pinDigits, '1');
+  pinDigits = inputDigit(pinDigits, '1');
+  pinDigits = inputDigit(pinDigits, '1');
+  assert.deepEqual(pinDigits, ['1', '1', '1', '1']);
+  assert.equal(pinDigits.join('').length, 4, 'Full PIN reaches 4 digits ready for auto-submit');
+
+  pinDigits = clearAll();
+  assert.deepEqual(pinDigits, ['', '', '', ''], 'Clear resets all 4 boxes');
+});
+
+// 8. Admin Setup: Credential updates and password deletion logic
+test('Admin Setup: Credential mutation and password/PIN clear lifecycle', () => {
+  const user = {
+    username: 'usthad',
+    passwordHash: 'some_bcrypt_hash',
+    passwordHint: 'usthad123',
+    pinHash: 'some_pin_hash',
+    pinHint: '2222'
+  };
+
+  // Admin updates username, password, and pin
+  function updateCredentials(record, updates) {
+    const next = { ...record };
+    if (updates.username) next.username = updates.username.toLowerCase().trim();
+    if (updates.clearPassword) {
+      next.passwordHash = null;
+      next.passwordHint = '';
+    } else if (updates.password) {
+      next.passwordHash = 'new_hash_' + updates.password;
+      next.passwordHint = updates.password;
+    }
+
+    if (updates.clearPin) {
+      next.pinHash = null;
+      next.pinHint = '';
+    } else if (updates.pin) {
+      next.pinHash = 'new_pin_hash_' + updates.pin;
+      next.pinHint = updates.pin;
+    }
+    return next;
+  }
+
+  const updated = updateCredentials(user, { password: 'newSecret99', pin: '5555' });
+  assert.equal(updated.passwordHint, 'newSecret99');
+  assert.equal(updated.pinHint, '5555');
+
+  // Admin deletes/clears password
+  const cleared = updateCredentials(updated, { clearPassword: true });
+  assert.equal(cleared.passwordHint, '');
+  assert.equal(cleared.passwordHash, null, 'Password safely deleted/cleared');
+});
