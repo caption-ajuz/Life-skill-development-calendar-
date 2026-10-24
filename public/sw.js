@@ -1,9 +1,9 @@
-// Service Worker v2.0 - Life Skill Course PWA
-const CACHE_VERSION = 'lsc-v2';
+// Service Worker v6.0 - Life Skill Course PWA (Network-first for code, Offline-ready fallback)
+const CACHE_VERSION = 'lsc-v6';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const API_CACHE = `${CACHE_VERSION}-api`;
 
-// App shell files to cache (Offline-first)
+// App shell files to pre-cache for offline support
 const APP_SHELL = [
   '/',
   '/index.html',
@@ -23,24 +23,44 @@ const APP_SHELL = [
   '/src/utils/image.js'
 ];
 
-// Install - cache app shell
+// Install - cache fresh app shell (bypassing HTTP cache) and activate immediately
 self.addEventListener('install', (event) => {
+  self.skipWaiting();
   event.waitUntil(
     caches.open(STATIC_CACHE).then((cache) => {
-      return cache.addAll(APP_SHELL);
-    }).then(() => self.skipWaiting())
+      return Promise.all(
+        APP_SHELL.map((url) =>
+          fetch(url, { cache: 'no-cache' })
+            .then((res) => {
+              if (res.ok) return cache.put(url, res);
+            })
+            .catch(() => {})
+        )
+      );
+    })
   );
 });
 
-// Activate - clean old caches
+// Activate - purge all older caches (including lsc-v2) and refresh any stale clients
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) => {
-      return Promise.all(
-        keys.filter((key) => key !== STATIC_CACHE && key !== API_CACHE)
-          .map((key) => caches.delete(key))
-      );
-    }).then(() => self.clients.claim())
+    caches.keys().then(async (keys) => {
+      const oldKeys = keys.filter((key) => key !== STATIC_CACHE && key !== API_CACHE);
+      const hadOldCaches = oldKeys.length > 0;
+
+      await Promise.all(oldKeys.map((key) => caches.delete(key)));
+      await self.clients.claim();
+
+      if (hadOldCaches) {
+        const windowClients = await self.clients.matchAll({ type: 'window' });
+        for (const client of windowClients) {
+          client.postMessage({ type: 'SW_CACHE_UPGRADED', version: CACHE_VERSION });
+          if ('navigate' in client) {
+            client.navigate(client.url).catch(() => {});
+          }
+        }
+      }
+    })
   );
 });
 
@@ -54,76 +74,79 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // API requests - stale-while-revalidate
+  // API requests - network first with cached fallback for offline mode
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(
       caches.open(API_CACHE).then((cache) => {
-        return cache.match(request).then((cached) => {
-          const networkFetch = fetch(request).then((response) => {
+        return fetch(request)
+          .then((response) => {
             if (response.ok) {
               cache.put(request, response.clone());
             }
             return response;
-          }).catch(() => {
-            // Network failed, return cached if available
-            if (cached) return cached;
-            return new Response(
-              JSON.stringify({ success: false, error: 'Offline - no cached data' }),
-              { status: 503, headers: { 'Content-Type': 'application/json' } }
-            );
+          })
+          .catch(() => {
+            return cache.match(request).then((cached) => {
+              if (cached) return cached;
+              return new Response(
+                JSON.stringify({ success: false, error: 'Offline - no cached data' }),
+                { status: 503, headers: { 'Content-Type': 'application/json' } }
+              );
+            });
           });
-
-          // Return cached immediately, update in background
-          return cached || networkFetch;
-        });
       })
     );
     return;
   }
 
-  // Static assets and app shell - cache first, network fallback
+  // Same-origin requests: Network-first for HTML & JS so updates always show immediately
   if (url.origin === location.origin) {
+    const isCodeOrHtml =
+      url.pathname === '/' ||
+      url.pathname.endsWith('.html') ||
+      url.pathname.endsWith('.js') ||
+      request.headers.get('accept')?.includes('text/html');
+
+    if (isCodeOrHtml) {
+      event.respondWith(
+        fetch(request, { cache: 'no-cache' })
+          .then((response) => {
+            if (response.ok) {
+              const responseClone = response.clone();
+              caches.open(STATIC_CACHE).then((cache) => {
+                cache.put(request, responseClone);
+              });
+            }
+            return response;
+          })
+          .catch(() => {
+            return caches.match(request).then((cached) => {
+              if (cached) return cached;
+              if (request.headers.get('accept')?.includes('text/html')) {
+                return caches.match('/index.html');
+              }
+              return new Response('Offline', { status: 503 });
+            });
+          })
+      );
+      return;
+    }
+
+    // Images, fonts, icons - cache first, network fallback
     event.respondWith(
       caches.match(request).then((cached) => {
         if (cached) return cached;
-
         return fetch(request).then((response) => {
-          // Cache successful responses for same-origin
-          if (response.ok && url.pathname.match(/\.(js|css|jpg|png|svg|woff2?)$/)) {
+          if (response.ok && url.pathname.match(/\.(css|jpg|jpeg|png|svg|woff2?)$/)) {
             const responseClone = response.clone();
             caches.open(STATIC_CACHE).then((cache) => {
               cache.put(request, responseClone);
             });
           }
           return response;
-        }).catch(() => {
-          // If HTML request fails, return cached index.html for SPA routing
-          if (request.headers.get('accept')?.includes('text/html')) {
-            return caches.match('/index.html');
-          }
-          return new Response('Offline', { status: 503 });
         });
       })
     );
-    return;
-  }
-
-  // CDN requests (esm.sh) - cache first
-  if (url.hostname === 'esm.sh') {
-    event.respondWith(
-      caches.open(STATIC_CACHE).then((cache) => {
-        return cache.match(request).then((cached) => {
-          if (cached) return cached;
-          return fetch(request).then((response) => {
-            if (response.ok) {
-              cache.put(request, response.clone());
-            }
-            return response;
-          });
-        });
-      })
-    );
-    return;
   }
 });
 

@@ -8,6 +8,7 @@ const { useState, useEffect } = window.hooks;
 export default function Teams() {
   const user = currentUser.value;
   const isSuperAdmin = user && user.role === 'super_admin';
+  const isLeader = user && user.role === 'team_leader';
 
   const [teams, setTeams] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -18,6 +19,17 @@ export default function Teams() {
   const [selectedTeam, setSelectedTeam] = useState(null);
   const [teamDetail, setTeamDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
+
+  // Add Team Member state
+  const [showAddMember, setShowAddMember] = useState(false);
+  const [newFullName, setNewFullName] = useState('');
+  const [newUsername, setNewUsername] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [newPhone, setNewPhone] = useState('');
+  const [newPin, setNewPin] = useState('');
+  const [addingMember, setAddingMember] = useState(false);
+  const [oneTimeCreds, setOneTimeCreds] = useState(null);
+  const [copiedCreds, setCopiedCreds] = useState(false);
 
   const loadTeams = async () => {
     try {
@@ -73,6 +85,63 @@ export default function Teams() {
       setSubmitting(false);
     }
   };
+
+  const handleAddMember = async (e) => {
+    e.preventDefault();
+    if (!selectedTeam) return;
+    if (newPin && !/^\d{4,6}$/.test(newPin.trim())) {
+      if (window.showToast) window.showToast('PIN must be 4 or 6 numeric digits.', 'error');
+      return;
+    }
+    setAddingMember(true);
+    try {
+      const payload = {
+        fullName: newFullName.trim(),
+        username: newUsername.trim(),
+        password: newPassword,
+        phone: newPhone.trim(),
+        pin: newPin ? newPin.trim() : undefined,
+        role: 'team_member',
+        teamId: selectedTeam._id
+      };
+      const res = await api.post('/api/users', payload);
+      if (res && res.success) {
+        if (window.showToast) window.showToast(`Team member "${newFullName}" added successfully!`, 'success');
+        setShowAddMember(false);
+        setNewFullName('');
+        setNewUsername('');
+        setNewPassword('');
+        setNewPhone('');
+        setNewPin('');
+        if (res.initialCredentials) {
+          setOneTimeCreds(res.initialCredentials);
+        }
+        loadTeamDetail(selectedTeam._id);
+        loadTeams();
+      }
+    } catch (err) {
+      if (window.showToast) window.showToast(err.message || 'Failed to add member.', 'error');
+    } finally {
+      setAddingMember(false);
+    }
+  };
+
+  const copyCredsToClipboard = async () => {
+    if (!oneTimeCreds) return;
+    const msg = `Markazul Hidayathil Islamiyya — Life Skill Course\nMember Login Credentials:\nUsername: ${oneTimeCreds.username}\nTemp Password: ${oneTimeCreds.temporaryPassword}\n${oneTimeCreds.pin ? `PIN: ${oneTimeCreds.pin}\n` : ''}Login URL: ${window.location.origin}/#/login`;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(msg);
+      }
+      setCopiedCreds(true);
+      if (window.showToast) window.showToast('Credentials copied to clipboard! ✓', 'success');
+      setTimeout(() => setCopiedCreds(false), 2500);
+    } catch (e) {
+      if (window.showToast) window.showToast('Failed to copy credentials.', 'error');
+    }
+  };
+
+  const canAddMember = selectedTeam && (isSuperAdmin || (isLeader && (user && (user.teamId === selectedTeam._id || (user.teamId && user.teamId._id === selectedTeam._id)))));
 
   return html`
     <div class="page">
@@ -171,7 +240,18 @@ export default function Teams() {
                   </div>
                 </div>
 
-                <div class="card-title">Team Members</div>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                  <div class="card-title" style="margin-bottom: 0;">Team Members</div>
+                  ${canAddMember ? html`
+                    <button
+                      class="btn btn-primary btn-sm"
+                      onClick=${() => setShowAddMember(true)}
+                    >
+                      + Add Member
+                    </button>
+                  ` : ''}
+                </div>
+
                 ${teamDetail.members && teamDetail.members.length > 0
                   ? teamDetail.members.map(
                       (m) => html`
@@ -180,7 +260,11 @@ export default function Teams() {
                             ${m.profilePhoto ? html`<img src="${m.profilePhoto}" alt="" />` : m.fullName.charAt(0)}
                           </div>
                           <div class="list-content">
-                            <div class="list-title">${m.fullName}</div>
+                            <div class="list-title">
+                              <a href="#/profile?id=${m._id}" style="color: inherit; text-decoration: none;">
+                                ${m.fullName}
+                              </a>
+                            </div>
                             <div class="list-subtitle">${m.role.replace('_', ' ')} • ${m.phone || 'No phone'}</div>
                           </div>
                           <div style="text-align: right; font-size: 12px;">
@@ -195,6 +279,134 @@ export default function Teams() {
             </div>
           `
         : ''}
+
+      <!-- Add Member to Team Modal -->
+      ${showAddMember && selectedTeam ? html`
+        <div class="modal-overlay" onClick=${() => setShowAddMember(false)}>
+          <div class="modal" onClick=${(e) => e.stopPropagation()}>
+            <div class="modal-header">
+              <div>
+                <div class="modal-title">Add Member to ${selectedTeam.name}</div>
+                <div style="font-size: 12px; color: var(--text-secondary);">Role: Team Member • Team locked to ${selectedTeam.name}</div>
+              </div>
+              <button
+                onClick=${() => setShowAddMember(false)}
+                style="background: none; border: none; font-size: 18px; cursor: pointer;"
+              >
+                ✕
+              </button>
+            </div>
+            <form onSubmit=${handleAddMember}>
+              <div class="form-group">
+                <label class="form-label">Full Name *</label>
+                <input
+                  type="text"
+                  class="form-input"
+                  placeholder="e.g. Salman Faris"
+                  value=${newFullName}
+                  onInput=${(e) => setNewFullName(e.target.value)}
+                  required
+                />
+              </div>
+              <div class="form-group">
+                <label class="form-label">Username * (Unique login handle)</label>
+                <input
+                  type="text"
+                  class="form-input"
+                  placeholder="e.g. salman.faris"
+                  value=${newUsername}
+                  onInput=${(e) => setNewUsername(e.target.value.toLowerCase().replace(/\s+/g, ''))}
+                  required
+                />
+              </div>
+              <div class="form-group">
+                <label class="form-label">Initial Password (leave blank to auto-generate)</label>
+                <input
+                  type="password"
+                  class="form-input"
+                  placeholder="Enter or leave blank for secure temp pass"
+                  value=${newPassword}
+                  onInput=${(e) => setNewPassword(e.target.value)}
+                />
+              </div>
+              <div class="form-group">
+                <label class="form-label">Quick 4-Digit PIN (optional)</label>
+                <input
+                  type="password"
+                  inputmode="numeric"
+                  maxlength="6"
+                  class="form-input"
+                  placeholder="e.g. 5566"
+                  value=${newPin}
+                  onInput=${(e) => setNewPin(e.target.value)}
+                />
+              </div>
+              <div class="form-group">
+                <label class="form-label">Mobile Number (optional)</label>
+                <input
+                  type="tel"
+                  class="form-input"
+                  placeholder="e.g. +91 98765 43210"
+                  value=${newPhone}
+                  onInput=${(e) => setNewPhone(e.target.value)}
+                />
+              </div>
+              <button
+                type="submit"
+                class="btn btn-primary btn-full"
+                disabled=${addingMember}
+              >
+                ${addingMember ? 'Adding Member...' : 'Create Member Account'}
+              </button>
+            </form>
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- One-Time Credential Modal -->
+      ${oneTimeCreds ? html`
+        <div class="modal-overlay" onClick=${() => setOneTimeCreds(null)}>
+          <div class="modal" onClick=${(e) => e.stopPropagation()}>
+            <div class="modal-header">
+              <div class="modal-title" style="color: #059669;">✓ Account Created Successfully</div>
+              <button
+                onClick=${() => setOneTimeCreds(null)}
+                style="background: none; border: none; font-size: 18px; cursor: pointer;"
+              >
+                ✕
+              </button>
+            </div>
+            <div style="background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 12px; padding: 14px; margin-bottom: 14px;">
+              <p style="font-size: 12.5px; color: #166534; font-weight: 600; margin-bottom: 10px;">
+                ⚠️ <b>Important:</b> These one-time credentials are shown once. The member will be required to change their temporary password upon first login.
+              </p>
+              <div style="font-size: 13px; line-height: 1.8; color: var(--text);">
+                <div>Username: <b style="font-family: monospace; font-size: 14px;">${oneTimeCreds.username}</b></div>
+                <div>Temp Password: <b style="font-family: monospace; font-size: 14px; color: #dc2626;">${oneTimeCreds.temporaryPassword}</b></div>
+                ${oneTimeCreds.pin ? html`<div>PIN: <b style="font-family: monospace; font-size: 14px; color: var(--primary);">${oneTimeCreds.pin}</b></div>` : ''}
+              </div>
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button
+                class="btn btn-primary"
+                style="flex: 1;"
+                onClick=${copyCredsToClipboard}
+              >
+                ${copiedCreds ? '✓ Copied!' : '📋 Copy Credentials'}
+              </button>
+              <button
+                class="btn btn-secondary"
+                onClick=${() => {
+                  const msg = `Markazul Hidayathil Islamiyya — Life Skill Course\nUsername: ${oneTimeCreds.username}\nTemp Password: ${oneTimeCreds.temporaryPassword}\n${oneTimeCreds.pin ? `PIN: ${oneTimeCreds.pin}\n` : ''}Login: ${window.location.origin}/#/login`;
+                  window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+                }}
+              >
+                📱 WhatsApp
+              </button>
+            </div>
+          </div>
+        </div>
+      ` : ''}
 
       <!-- Teams List -->
       ${loading

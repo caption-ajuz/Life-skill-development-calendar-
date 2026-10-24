@@ -25,6 +25,12 @@ const collectionSchema = new mongoose.Schema(
       required: true,
       min: 0
     },
+    incomeType: {
+      type: String,
+      enum: ['calendar_sale', 'donation', 'other_income'],
+      default: 'calendar_sale',
+      index: true
+    },
     date: {
       type: Date,
       required: true,
@@ -43,10 +49,38 @@ const collectionSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['active', 'flagged', 'corrected'],
-      default: 'active',
+      enum: ['pending', 'approved', 'rejected', 'active', 'flagged', 'corrected'],
+      default: 'pending',
       index: true
     },
+    approvalStatus: {
+      type: String,
+      enum: ['pending', 'approved', 'rejected'],
+      default: 'pending',
+      index: true
+    },
+    approvedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null
+    },
+    approvedAt: {
+      type: Date,
+      default: null
+    },
+    rejectionReason: {
+      type: String,
+      default: '',
+      trim: true
+    },
+    statusHistory: [
+      {
+        status: String,
+        changedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        changedAt: { type: Date, default: Date.now },
+        reason: String
+      }
+    ],
     clientId: {
       type: String,
       unique: true,

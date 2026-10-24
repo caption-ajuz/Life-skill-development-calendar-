@@ -2,11 +2,15 @@ import api from '../services/api.js';
 import db from '../services/db.js';
 import { generateClientId, refreshPendingCount } from '../services/sync.js';
 import { formatCurrency, formatDate } from '../utils/format.js';
+import { currentUser } from '../store/auth.js';
 
 const html = window.html;
 const { useState, useEffect } = window.hooks;
 
 export default function Collections() {
+  const user = currentUser.value;
+  const canReview = user && ['super_admin', 'usthad', 'team_leader'].includes(user.role);
+
   const [areas, setAreas] = useState([]);
   const [areaId, setAreaId] = useState('');
   const [amount, setAmount] = useState('');
@@ -17,6 +21,16 @@ export default function Collections() {
   const [donorName, setDonorName] = useState('');
   const [loading, setLoading] = useState(false);
   const [recentEntries, setRecentEntries] = useState([]);
+
+  // Approval review modal state
+  const [rejectingItem, setRejectingItem] = useState(null);
+  const [rejectionReason, setRejectionReason] = useState('');
+  const [actionLoading, setActionLoading] = useState(false);
+
+  // Resubmit modal state
+  const [resubmittingItem, setResubmittingItem] = useState(null);
+  const [resubmitAmount, setResubmitAmount] = useState('');
+  const [resubmitNotes, setResubmitNotes] = useState('');
 
   const loadAreas = async () => {
     try {
@@ -29,12 +43,78 @@ export default function Collections() {
 
   const loadRecent = async () => {
     try {
-      const res = await api.get('/api/collections', { limit: 10 });
+      const res = await api.get('/api/collections', { limit: 20 });
       if (res && res.success && res.data) {
         setRecentEntries(res.data.collections || []);
       }
     } catch (err) {
       console.warn('Could not fetch collections:', err);
+    }
+  };
+
+  const handleApprove = async (id) => {
+    setActionLoading(true);
+    try {
+      const res = await api.put(`/api/collections/${id}/approve`, {});
+      if (res && res.success) {
+        if (window.showToast) window.showToast('Collection entry approved! ✓', 'success');
+        loadRecent();
+      } else {
+        if (window.showToast) window.showToast(res.error || 'Failed to approve', 'error');
+      }
+    } catch (err) {
+      if (window.showToast) window.showToast(err.message || 'Error approving entry', 'error');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleConfirmReject = async () => {
+    if (!rejectionReason.trim()) {
+      if (window.showToast) window.showToast('Please provide a reason for rejection.', 'error');
+      return;
+    }
+    setActionLoading(true);
+    try {
+      const res = await api.put(`/api/collections/${rejectingItem._id}/reject`, { reason: rejectionReason.trim() });
+      if (res && res.success) {
+        if (window.showToast) window.showToast('Collection entry rejected.', 'info');
+        setRejectingItem(null);
+        setRejectionReason('');
+        loadRecent();
+      } else {
+        if (window.showToast) window.showToast(res.error || 'Failed to reject', 'error');
+      }
+    } catch (err) {
+      if (window.showToast) window.showToast(err.message || 'Error rejecting entry', 'error');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleConfirmResubmit = async () => {
+    const amt = parseFloat(resubmitAmount);
+    if (isNaN(amt) || amt < 0) {
+      if (window.showToast) window.showToast('Please enter a valid amount.', 'error');
+      return;
+    }
+    setActionLoading(true);
+    try {
+      const res = await api.put(`/api/collections/${resubmittingItem._id}/resubmit`, {
+        amount: amt,
+        notes: resubmitNotes
+      });
+      if (res && res.success) {
+        if (window.showToast) window.showToast('Corrected collection resubmitted for approval! ✓', 'success');
+        setResubmittingItem(null);
+        loadRecent();
+      } else {
+        if (window.showToast) window.showToast(res.error || 'Failed to resubmit', 'error');
+      }
+    } catch (err) {
+      if (window.showToast) window.showToast(err.message || 'Error resubmitting collection', 'error');
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -215,26 +295,214 @@ export default function Collections() {
         </form>
       </div>
 
-      <!-- Recent Records -->
+      <!-- Recent Records & Approvals -->
       ${recentEntries.length > 0
         ? html`
             <div class="card">
-              <div class="card-title">Recent Collections</div>
-              ${recentEntries.map(
-                (col) => html`
-                  <div class="list-item" key=${col._id}>
-                    <div class="list-content">
-                      <div class="list-title">
-                        ${col.areaId ? col.areaId.name : (col.notes || 'Collection')}
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <div class="card-title" style="margin-bottom: 0;">Recent Collections & Approvals</div>
+                <button
+                  type="button"
+                  onClick=${loadRecent}
+                  style="background: none; border: none; color: var(--primary); font-size: 13px; font-weight: 600; cursor: pointer;"
+                >
+                  🔄 Refresh
+                </button>
+              </div>
+
+              ${recentEntries.map((col) => {
+                const status = col.approvalStatus || col.status || 'pending';
+                const isApproved = status === 'approved' || status === 'active';
+                const isPending = status === 'pending';
+                const isRejected = status === 'rejected';
+
+                return html`
+                  <div
+                    class="list-item"
+                    key=${col._id}
+                    style="display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 12px; border-bottom: 1px solid #f1f5f9;"
+                  >
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;">
+                      <div class="list-content" style="flex: 1;">
+                        <div class="list-title" style="font-weight: 700; font-size: 15px;">
+                          ${col.areaId ? (col.areaId.name || col.areaId) : (col.notes || 'Collection')}
+                          ${col.memberId && col.memberId.fullName ? html`<span style="font-weight: 400; font-size: 13px; color: var(--text-light);"> • ${col.memberId.fullName}</span>` : ''}
+                        </div>
+                        <div class="list-subtitle" style="font-size: 12px; color: var(--text-light); margin-top: 2px;">
+                          ${formatDate(col.date)} ${col.notes ? `• ${col.notes}` : ''}
+                        </div>
+
+                        ${isRejected && col.rejectionReason
+                          ? html`
+                              <div
+                                style="margin-top: 6px; padding: 6px 10px; background: #fef2f2; border-left: 3px solid #ef4444; border-radius: 4px; font-size: 12px; color: #991b1b;"
+                              >
+                                <b>Rejection Reason:</b> ${col.rejectionReason}
+                              </div>
+                            `
+                          : ''}
                       </div>
-                      <div class="list-subtitle">${formatDate(col.date)}</div>
+
+                      <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
+                        <div style="font-weight: 700; color: #059669; font-size: 15px;">
+                          ${formatCurrency(col.amount)}
+                        </div>
+
+                        <!-- Status Badge -->
+                        ${isApproved
+                          ? html`<span style="font-size: 11px; font-weight: 700; color: #065f46; background: #d1fae5; padding: 2px 7px; border-radius: 10px;">✓ Approved</span>`
+                          : isPending
+                          ? html`<span style="font-size: 11px; font-weight: 700; color: #92400e; background: #fef3c7; padding: 2px 7px; border-radius: 10px;">⏳ Pending</span>`
+                          : html`<span style="font-size: 11px; font-weight: 700; color: #991b1b; background: #fee2e2; padding: 2px 7px; border-radius: 10px;">✕ Rejected</span>`}
+                      </div>
                     </div>
-                    <div style="font-weight: 700; color: #059669; font-size: 15px;">
-                      ${formatCurrency(col.amount)}
-                    </div>
+
+                    <!-- Review Actions for Leaders / Admins -->
+                    ${canReview && isPending
+                      ? html`
+                          <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; padding-top: 6px; border-top: 1px dashed #e2e8f0;">
+                            <button
+                              type="button"
+                              onClick=${() => handleApprove(col._id)}
+                              disabled=${actionLoading}
+                              style="background: #10b981; color: white; border: none; padding: 5px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
+                            >
+                              ✓ Approve
+                            </button>
+                            <button
+                              type="button"
+                              onClick=${() => {
+                                setRejectingItem(col);
+                                setRejectionReason('');
+                              }}
+                              disabled=${actionLoading}
+                              style="background: #ef4444; color: white; border: none; padding: 5px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
+                            >
+                              ✕ Reject
+                            </button>
+                          </div>
+                        `
+                      : ''}
+
+                    <!-- Resubmit Action for Rejected Entries -->
+                    ${isRejected
+                      ? html`
+                          <div style="display: flex; justify-content: flex-end; margin-top: 4px;">
+                            <button
+                              type="button"
+                              onClick=${() => {
+                                setResubmittingItem(col);
+                                setResubmitAmount(String(col.amount));
+                                setResubmitNotes(col.notes || '');
+                              }}
+                              style="background: var(--primary); color: white; border: none; padding: 5px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
+                            >
+                              ✏️ Correct & Resubmit
+                            </button>
+                          </div>
+                        `
+                      : ''}
                   </div>
-                `
-              )}
+                `;
+              })}
+            </div>
+          `
+        : ''}
+
+      <!-- Rejection Modal -->
+      ${rejectingItem
+        ? html`
+            <div class="modal-overlay" onClick=${() => setRejectingItem(null)}>
+              <div class="modal" onClick=${(e) => e.stopPropagation()} style="max-width: 400px; padding: 20px;">
+                <h3 style="margin-top: 0; font-size: 16px; font-weight: 700;">Reject Collection Entry</h3>
+                <p style="font-size: 13px; color: var(--text-light); margin-bottom: 12px;">
+                  Provide a mandatory reason for rejecting this collection entry (${formatCurrency(rejectingItem.amount)}). The member will be able to correct and resubmit.
+                </p>
+                <div class="form-group">
+                  <label class="form-label">Rejection Reason</label>
+                  <textarea
+                    class="form-input"
+                    rows="3"
+                    placeholder="e.g. Discrepancy with cash received, wrong donor name..."
+                    value=${rejectionReason}
+                    onInput=${(e) => setRejectionReason(e.target.value)}
+                    required
+                  ></textarea>
+                </div>
+                <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;">
+                  <button
+                    type="button"
+                    class="btn btn-secondary"
+                    onClick=${() => setRejectingItem(null)}
+                    disabled=${actionLoading}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    class="btn"
+                    style="background: #ef4444; color: white;"
+                    onClick=${handleConfirmReject}
+                    disabled=${actionLoading}
+                  >
+                    ${actionLoading ? 'Rejecting...' : 'Confirm Rejection'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          `
+        : ''}
+
+      <!-- Resubmit Modal -->
+      ${resubmittingItem
+        ? html`
+            <div class="modal-overlay" onClick=${() => setResubmittingItem(null)}>
+              <div class="modal" onClick=${(e) => e.stopPropagation()} style="max-width: 400px; padding: 20px;">
+                <h3 style="margin-top: 0; font-size: 16px; font-weight: 700;">Correct & Resubmit Collection</h3>
+                <p style="font-size: 13px; color: var(--text-light); margin-bottom: 12px;">
+                  Update the amount or details as requested and resubmit for approval.
+                </p>
+                <div class="form-group">
+                  <label class="form-label">Corrected Amount (₹)</label>
+                  <input
+                    type="number"
+                    step="any"
+                    class="form-input"
+                    value=${resubmitAmount}
+                    onInput=${(e) => setResubmitAmount(e.target.value)}
+                    required
+                    min="0"
+                  />
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Correction Notes</label>
+                  <input
+                    type="text"
+                    class="form-input"
+                    placeholder="Explanation of correction..."
+                    value=${resubmitNotes}
+                    onInput=${(e) => setResubmitNotes(e.target.value)}
+                  />
+                </div>
+                <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;">
+                  <button
+                    type="button"
+                    class="btn btn-secondary"
+                    onClick=${() => setResubmittingItem(null)}
+                    disabled=${actionLoading}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-success"
+                    onClick=${handleConfirmResubmit}
+                    disabled=${actionLoading}
+                  >
+                    ${actionLoading ? 'Resubmitting...' : 'Resubmit Collection ✓'}
+                  </button>
+                </div>
+              </div>
             </div>
           `
         : ''}

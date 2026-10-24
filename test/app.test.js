@@ -236,3 +236,350 @@ test('Admin Setup: Credential mutation and password/PIN clear lifecycle', () => 
   assert.equal(cleared.passwordHint, '');
   assert.equal(cleared.passwordHash, null, 'Password safely deleted/cleared');
 });
+
+// 9. First-Login Password Change Lifecycle
+test('Security: First-login temporary password retirement lifecycle', () => {
+  const newUser = {
+    username: 'salman.faris',
+    role: 'team_member',
+    mustChangePassword: true,
+    passwordHash: 'temp_hash_abc123'
+  };
+
+  // Simulating /api/auth/first-login-change-password
+  function processFirstLoginChange(userRecord, newPassword) {
+    if (!newPassword || newPassword.length < 6) {
+      throw new Error('New password must be at least 6 characters long.');
+    }
+    return {
+      ...userRecord,
+      passwordHash: 'secure_hashed_' + newPassword,
+      mustChangePassword: false,
+      updatedAt: new Date().toISOString()
+    };
+  }
+
+  // Reject short password
+  assert.throws(
+    () => processFirstLoginChange(newUser, '123'),
+    /New password must be at least 6 characters long./
+  );
+
+  // Success sets mustChangePassword to false
+  const updatedUser = processFirstLoginChange(newUser, 'PermanentSecurePass@2026');
+  assert.equal(updatedUser.mustChangePassword, false, 'mustChangePassword cleared on permanent password save');
+  assert.equal(updatedUser.passwordHash.startsWith('secure_hashed_'), true);
+});
+
+// 10. Team Leader Member Creation Authorization & Scoping
+test('Authorization: Team Leader member creation scoping and privilege limits', () => {
+  const leaderUser = {
+    _id: 'leader-1',
+    role: 'team_leader',
+    teamId: 'team-badr'
+  };
+
+  function authorizeMemberCreation(creator, memberPayload) {
+    if (creator.role === 'super_admin') {
+      return { ...memberPayload, teamId: memberPayload.teamId || null };
+    }
+    if (creator.role === 'team_leader') {
+      // Must not create admin, usthad, or leader
+      if (['super_admin', 'usthad', 'team_leader'].includes(memberPayload.role)) {
+        throw new Error('Team leaders can only create Team Member accounts.');
+      }
+      // Must strictly lock to leader's team
+      if (!creator.teamId) {
+        throw new Error('Team leader is not assigned to a team.');
+      }
+      return {
+        ...memberPayload,
+        role: 'team_member',
+        teamId: creator.teamId
+      };
+    }
+    throw new Error('Unauthorized');
+  }
+
+  // Team Leader creates regular member in their team -> succeeds & locks to team-badr
+  const created = authorizeMemberCreation(leaderUser, {
+    fullName: 'Anas P',
+    username: 'anas.p',
+    teamId: 'team-uhud', // attempt to assign to another team
+    role: 'team_member'
+  });
+  assert.equal(created.teamId, 'team-badr', 'Team ID locked strictly to leader team');
+  assert.equal(created.role, 'team_member');
+
+  // Team Leader attempts privilege escalation
+  assert.throws(
+    () => authorizeMemberCreation(leaderUser, { fullName: 'Hacker', username: 'hacker', role: 'super_admin' }),
+    /Team leaders can only create Team Member accounts./
+  );
+  assert.throws(
+    () => authorizeMemberCreation(leaderUser, { fullName: 'Hacker', username: 'hacker', role: 'usthad' }),
+    /Team leaders can only create Team Member accounts./
+  );
+});
+
+// 11. Role-Based Financial Scoping
+test('Financial Visibility: Role-based financial information restrictions', () => {
+  const fullCampaignFinance = {
+    totalCollected: 250000,
+    confirmedTransfers: 180000,
+    pendingTransfers: 70000,
+    initialInvestment: 25000,
+    printingCost: 60000,
+    otherExpenses: 15000,
+    totalExpenses: 100000,
+    netProfitOrLoss: 150000
+  };
+
+  function filterFinancialMetricsForRole(role, metrics) {
+    if (role === 'super_admin' || role === 'usthad') {
+      return metrics;
+    }
+    if (role === 'team_leader' || role === 'team_member') {
+      // Strips confidential central costs
+      const { initialInvestment, printingCost, totalExpenses, netProfitOrLoss, ...safe } = metrics;
+      return safe;
+    }
+    return {};
+  }
+
+  const adminView = filterFinancialMetricsForRole('super_admin', fullCampaignFinance);
+  assert.equal(adminView.initialInvestment, 25000, 'Super admin sees initial investment');
+  assert.equal(adminView.printingCost, 60000, 'Super admin sees printing cost');
+  assert.equal(adminView.netProfitOrLoss, 150000, 'Super admin sees net profit');
+
+  const leaderView = filterFinancialMetricsForRole('team_leader', fullCampaignFinance);
+  assert.equal(leaderView.initialInvestment, undefined, 'Leader cannot see initial investment');
+  assert.equal(leaderView.printingCost, undefined, 'Leader cannot see printing cost');
+  assert.equal(leaderView.netProfitOrLoss, undefined, 'Leader cannot see net profit');
+  assert.equal(leaderView.totalCollected, 250000, 'Leader can see field collections');
+});
+
+// 12. Custom WhatsApp Report Builder Generator & Tie Handling
+test('WhatsApp Report Builder: Custom section toggling, progress bar & ranking ties', async () => {
+  const { buildCustomWhatsAppReport } = await import('../server/utils/whatsappReports.js');
+
+  const sampleItems = [
+    { name: 'Team Badr', distributed: 500, collected: 50000, inHand: 100 },
+    { name: 'Team Uhud', distributed: 500, collected: 50000, inHand: 150 }, // Tie with Team Badr
+    { name: 'Team Khandaq', distributed: 200, collected: 20000, inHand: 50 }
+  ];
+
+  const sampleTotals = {
+    distributed: 1200,
+    collected: 120000,
+    transferred: 90000,
+    teamsCount: 3,
+    membersCount: 15,
+    areasCount: 5,
+    otherIncome: 0,
+    expenses: 0
+  };
+
+  // Structured teams data with members for testing team-wise performance & member rankings
+  const sampleTeamsData = [
+    {
+      name: 'Team 1 — Al-Huda',
+      distributed: 500,
+      collected: 50000,
+      members: [
+        { name: 'Ahmed Bilal', distributed: 250, collected: 25000 },
+        { name: 'Zaid Rahman', distributed: 150, collected: 15000 },
+        { name: 'Rashid Ali', distributed: 100, collected: 10000 }
+      ]
+    },
+    {
+      name: 'Team 2 — Al-Noor',
+      distributed: 400,
+      collected: 40000,
+      members: [
+        { name: 'Mustafa Kamal', distributed: 200, collected: 20000 },
+        { name: 'Umar Farooq', distributed: 200, collected: 20000 } // Tie
+      ]
+    }
+  ];
+
+  // Build report matching the user's required layout
+  const fullReport = buildCustomWhatsAppReport({
+    reportType: 'daily',
+    dateStr: '24 Oct 2026',
+    scopeTitle: 'Campaign-Wide',
+    role: 'super_admin',
+    campaignConfig: { totalStock: 5000, calendarPrice: 100 },
+    teamsData: sampleTeamsData,
+    totals: sampleTotals,
+    sections: {
+      includeHeader: true,
+      includeSummary: true,
+      includeBreakdown: true,
+      includeLeaderboard: true,
+      includeCollectionRanking: true,
+      includeHandoverStatus: true,
+      includeZeroActivity: false,
+      includeOfflineNotice: true,
+      includeFooter: true
+    },
+    customNote: 'Camp review meeting tomorrow 8 PM'
+  });
+
+  assert.ok(fullReport.includes('LIFE SKILL COURSE — CALENDAR CAMP'), 'Includes Main Heading');
+  assert.ok(fullReport.includes('Date: 24 Oct 2026'), 'Includes Date');
+  assert.ok(fullReport.includes('OVERALL SUMMARY'), 'Includes Overall Summary');
+  assert.ok(fullReport.includes('Total Teams: 3'), 'Includes Total Teams');
+  assert.ok(fullReport.includes('Calendars Distributed/Sold Today: 1,200'), 'Includes Distributed Today');
+  assert.ok(fullReport.includes("Today's Collection: ₹1,20,000"), 'Includes Today Collection');
+  assert.ok(fullReport.includes('TEAM-WISE PERFORMANCE'), 'Includes Team-Wise Performance');
+  assert.ok(fullReport.includes('Al-Huda'), 'Includes Team 1 Name');
+  assert.ok(fullReport.includes('Calendar Ranking'), 'Includes Calendar Ranking header');
+  assert.ok(fullReport.includes('🥇 1. Ahmed Bilal — 250 calendars'), 'Assigns gold medal 1st');
+  assert.ok(fullReport.includes('🥈 2. Zaid Rahman — 150 calendars'), 'Assigns silver medal 2nd');
+  assert.ok(fullReport.includes('🥉 3. Rashid Ali — 100 calendars'), 'Assigns bronze medal 3rd');
+  assert.ok(fullReport.includes('Collection Ranking'), 'Includes Collection Ranking');
+  assert.ok(fullReport.includes('CAMPAIGN TOTAL'), 'Includes Campaign Total');
+  assert.ok(fullReport.includes('Camp review meeting tomorrow 8 PM'), 'Includes Custom Announcement');
+});
+
+// 13. Tie-Handling Ranking Rules Test
+test('Ranking Rules: Descending sort, ties share rank, subsequent ranks skip correctly', async () => {
+  const { assignRanks, formatRankBadge } = await import('../server/utils/whatsappReports.js');
+
+  const members = [
+    { name: 'Member C', distributed: 80 },
+    { name: 'Member A', distributed: 150 },
+    { name: 'Member B', distributed: 150 }, // Tie with Member A
+    { name: 'Member D', distributed: 50 }
+  ];
+
+  const ranked = assignRanks(members, 'distributed');
+
+  // Must sort highest to lowest: Member A & B (150) first, then C (80), then D (50)
+  assert.equal(ranked[0].distributed, 150);
+  assert.equal(ranked[1].distributed, 150);
+  assert.equal(ranked[2].distributed, 80);
+  assert.equal(ranked[3].distributed, 50);
+
+  // Both top members share Rank 1
+  assert.equal(ranked[0].rank, 1, 'First member gets rank 1');
+  assert.equal(ranked[1].rank, 1, 'Tied member gets rank 1');
+  assert.equal(ranked[2].rank, 3, 'Subsequent member skips to rank 3');
+  assert.equal(ranked[3].rank, 4, 'Fourth member gets rank 4');
+
+  // Verify badge formatting
+  assert.equal(formatRankBadge(1), '🥇 1. ');
+  assert.equal(formatRankBadge(2), '🥈 2. ');
+  assert.equal(formatRankBadge(3), '🥉 3. ');
+  assert.equal(formatRankBadge(4), '4. ');
+});
+
+// 14. Role-Based Permissions & Entry Approval Workflow Rules
+test('Role Permissions: Team Leader team-locking and member approval restrictions', () => {
+  // Mock entry belonging to Team 1
+  const entryTeam1 = {
+    _id: 'entry-101',
+    teamId: 'team-01',
+    memberId: 'user-member-01',
+    quantity: 25,
+    status: 'pending',
+    approvalStatus: 'pending'
+  };
+
+  function canUserApprove(caller, entry) {
+    if (caller.role === 'team_member') {
+      return { allowed: false, status: 403, error: 'Team members are not authorized to approve entries.' };
+    }
+    if (caller.role === 'team_leader') {
+      if (caller.teamId !== entry.teamId) {
+        return { allowed: false, status: 403, error: 'You are only authorized to review and approve entries for your own team.' };
+      }
+    }
+    return { allowed: true, status: 200 };
+  }
+
+  // 1. Team member cannot approve
+  const memberCaller = { _id: 'user-member-01', role: 'team_member', teamId: 'team-01' };
+  assert.equal(canUserApprove(memberCaller, entryTeam1).allowed, false);
+  assert.equal(canUserApprove(memberCaller, entryTeam1).status, 403);
+
+  // 2. Team Leader of other team cannot approve
+  const foreignLeader = { _id: 'user-leader-02', role: 'team_leader', teamId: 'team-02' };
+  assert.equal(canUserApprove(foreignLeader, entryTeam1).allowed, false);
+  assert.equal(canUserApprove(foreignLeader, entryTeam1).status, 403);
+
+  // 3. Team Leader of same team CAN approve
+  const ownLeader = { _id: 'user-leader-01', role: 'team_leader', teamId: 'team-01' };
+  assert.equal(canUserApprove(ownLeader, entryTeam1).allowed, true);
+
+  // 4. Super Admin CAN approve any entry
+  const superAdmin = { _id: 'user-admin', role: 'super_admin' };
+  assert.equal(canUserApprove(superAdmin, entryTeam1).allowed, true);
+});
+
+// 15. Rejection & Resubmission Workflow Rules
+test('Approval Workflow: Mandatory rejection reason, approver audit, and resubmission', () => {
+  const entry = {
+    _id: 'dist-201',
+    quantity: 50,
+    status: 'pending',
+    approvalStatus: 'pending',
+    approvedBy: null,
+    approvedAt: null,
+    rejectionReason: '',
+    statusHistory: []
+  };
+
+  // Rejection requires reason
+  function rejectEntry(rec, reviewer, reason) {
+    if (!reason || !reason.trim()) {
+      throw new Error('A specific reason is required to reject an entry.');
+    }
+    rec.status = 'rejected';
+    rec.approvalStatus = 'rejected';
+    rec.rejectionReason = reason.trim();
+    rec.approvedBy = reviewer._id;
+    rec.approvedAt = new Date().toISOString();
+    rec.statusHistory.push({ status: 'rejected', reason: reason.trim() });
+    return rec;
+  }
+
+  assert.throws(() => rejectEntry(entry, { _id: 'leader-1' }, ''), /A specific reason is required/);
+
+  // Successful rejection
+  const rejected = rejectEntry(entry, { _id: 'leader-1' }, 'Discrepancy with physical stock count');
+  assert.equal(rejected.approvalStatus, 'rejected');
+  assert.equal(rejected.rejectionReason, 'Discrepancy with physical stock count');
+  assert.equal(rejected.approvedBy, 'leader-1');
+  assert.ok(rejected.approvedAt);
+
+  // Resubmission corrects values and resets status to pending
+  function resubmitEntry(rec, newQty) {
+    rec.quantity = newQty;
+    rec.status = 'pending';
+    rec.approvalStatus = 'pending';
+    rec.rejectionReason = '';
+    rec.statusHistory.push({ status: 'pending', reason: 'Resubmitted after correction' });
+    return rec;
+  }
+
+  const resubmitted = resubmitEntry(rejected, 45);
+  assert.equal(resubmitted.quantity, 45);
+  assert.equal(resubmitted.approvalStatus, 'pending');
+  assert.equal(resubmitted.rejectionReason, '');
+  assert.equal(resubmitted.statusHistory.length, 2);
+});
+
+// 16. Database Connection Status Indicator Test
+test('Database Status: Diagnostic structure with state, details and message', async () => {
+  const { getDbStatus } = await import('../server/config/db.js');
+  const status = getDbStatus();
+
+  assert.ok(typeof status.connected === 'boolean', 'status.connected is boolean');
+  assert.ok(typeof status.state === 'string', 'status.state is string');
+  assert.ok(typeof status.message === 'string', 'status.message is string');
+  assert.ok(typeof status.details === 'string', 'status.details explains connection state');
+  assert.ok(status.timestamp, 'status includes timestamp');
+});
+

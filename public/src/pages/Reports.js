@@ -16,14 +16,27 @@ export default function Reports() {
   const [activeTab, setActiveTab] = useState('whatsapp');
 
   // WhatsApp Report Controls
-  const [reportFormat, setReportFormat] = useState('daily'); // 'daily' | 'overall'
-  const [selectedDatePreset, setSelectedDatePreset] = useState('today'); // 'today' | 'yesterday' | 'custom'
+  const [reportType, setReportType] = useState('daily'); // 'daily' | 'overall' | 'team' | 'member' | 'area' | 'handover'
+  const [dateScope, setDateScope] = useState('today'); // 'today' | 'yesterday' | 'specific_date' | 'date_range' | 'all_time'
   const [singleDate, setSingleDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [rangeFrom, setRangeFrom] = useState('');
   const [rangeTo, setRangeTo] = useState('');
-  const [breakdown, setBreakdown] = useState('team'); // 'team' | 'area' | 'member'
   const [selectedTeamId, setSelectedTeamId] = useState('');
+  const [targetMemberId, setTargetMemberId] = useState('');
   const [selectedAreaId, setSelectedAreaId] = useState('');
+
+  // Granular Section Checkboxes
+  const [includeHeader, setIncludeHeader] = useState(true);
+  const [includeSummary, setIncludeSummary] = useState(true);
+  const [includeProgressBar, setIncludeProgressBar] = useState(false);
+  const [includeTopPerformers, setIncludeTopPerformers] = useState(true);
+  const [includeBreakdown, setIncludeBreakdown] = useState(true);
+  const [includeCollectionRanking, setIncludeCollectionRanking] = useState(false);
+  const [includeHandoverStatus, setIncludeHandoverStatus] = useState(isSuperOrUsthad || isTeamLeader);
+  const [includeZeroActivity, setIncludeZeroActivity] = useState(false);
+  const [includeOfflineNotice, setIncludeOfflineNotice] = useState(true);
+  const [includeFooter, setIncludeFooter] = useState(true);
+  const [customNote, setCustomNote] = useState('');
 
   // WhatsApp Preview state
   const [whatsappText, setWhatsappText] = useState('');
@@ -34,6 +47,7 @@ export default function Reports() {
   // Reference lists for filters
   const [teams, setTeams] = useState([]);
   const [areas, setAreas] = useState([]);
+  const [membersList, setMembersList] = useState([]);
 
   // Table, PDF & Excel Export state
   const [type, setType] = useState('distribution');
@@ -48,7 +62,7 @@ export default function Reports() {
   const [loadingTable, setLoadingTable] = useState(false);
   const [exporting, setExporting] = useState(false);
 
-  // Load reference teams and areas once
+  // Load reference teams, areas and users once
   useEffect(() => {
     api.get('/api/teams').then((res) => {
       if (res && res.success && res.data) setTeams(res.data);
@@ -57,11 +71,60 @@ export default function Reports() {
     api.get('/api/areas').then((res) => {
       if (res && res.success && res.data) setAreas(res.data);
     }).catch(() => {});
+
+    api.get('/api/users').then((res) => {
+      if (res && res.success && res.data) setMembersList(res.data.users || []);
+    }).catch(() => {});
   }, []);
+
+  // Quick Preset Handler
+  const applyPreset = (presetName) => {
+    if (presetName === 'default') {
+      setIncludeHeader(true);
+      setIncludeSummary(true);
+      setIncludeProgressBar(reportType === 'overall');
+      setIncludeTopPerformers(reportType === 'daily' || reportType === 'overall');
+      setIncludeBreakdown(true);
+      setIncludeHandoverStatus(isSuperOrUsthad || isTeamLeader);
+      setIncludeZeroActivity(false);
+      setIncludeOfflineNotice(true);
+      setIncludeFooter(true);
+    } else if (presetName === 'executive') {
+      setIncludeHeader(true);
+      setIncludeSummary(true);
+      setIncludeProgressBar(true);
+      setIncludeTopPerformers(false);
+      setIncludeBreakdown(false);
+      setIncludeHandoverStatus(isSuperOrUsthad || isTeamLeader);
+      setIncludeZeroActivity(false);
+      setIncludeOfflineNotice(false);
+      setIncludeFooter(true);
+    } else if (presetName === 'detailed') {
+      setIncludeHeader(true);
+      setIncludeSummary(true);
+      setIncludeProgressBar(true);
+      setIncludeTopPerformers(true);
+      setIncludeBreakdown(true);
+      setIncludeHandoverStatus(isSuperOrUsthad || isTeamLeader);
+      setIncludeZeroActivity(true);
+      setIncludeOfflineNotice(true);
+      setIncludeFooter(true);
+    } else if (presetName === 'minimal') {
+      setIncludeHeader(false);
+      setIncludeSummary(true);
+      setIncludeProgressBar(false);
+      setIncludeTopPerformers(false);
+      setIncludeBreakdown(true);
+      setIncludeHandoverStatus(false);
+      setIncludeZeroActivity(false);
+      setIncludeOfflineNotice(false);
+      setIncludeFooter(false);
+    }
+  };
 
   // Set date preset handler
   const handleDatePreset = (preset) => {
-    setSelectedDatePreset(preset);
+    setDateScope(preset);
     const now = new Date();
     if (preset === 'today') {
       setSingleDate(now.toISOString().split('T')[0]);
@@ -83,21 +146,44 @@ export default function Reports() {
         offlineCount = 0;
       }
 
+      const activeReportType = isTeamLeader ? 'team' : reportType;
       const params = {
-        reportFormat,
-        breakdown,
+        reportType: activeReportType,
+        dateScope,
+        includeHeader: includeHeader ? 'true' : 'false',
+        includeSummary: includeSummary ? 'true' : 'false',
+        includeProgressBar: includeProgressBar ? 'true' : 'false',
+        includeTopPerformers: includeTopPerformers ? 'true' : 'false',
+        includeBreakdown: includeBreakdown ? 'true' : 'false',
+        includeLeaderboard: includeBreakdown ? 'true' : 'false',
+        includeCollectionRanking: includeCollectionRanking ? 'true' : 'false',
+        includeHandoverStatus: includeHandoverStatus ? 'true' : 'false',
+        includeZeroActivity: includeZeroActivity ? 'true' : 'false',
+        includeOfflineNotice: includeOfflineNotice ? 'true' : 'false',
+        includeFooter: includeFooter ? 'true' : 'false',
         offlineCount
       };
 
-      if (reportFormat === 'daily') {
+      if (customNote && customNote.trim()) {
+        params.customNote = customNote.trim();
+      }
+
+      if (dateScope === 'specific_date' || dateScope === 'today' || dateScope === 'yesterday') {
         params.date = singleDate;
-      } else {
+      }
+      if (dateScope === 'date_range') {
         if (rangeFrom) params.dateFrom = rangeFrom;
         if (rangeTo) params.dateTo = rangeTo;
       }
 
-      if (selectedTeamId) params.teamId = selectedTeamId;
-      if (selectedAreaId) params.areaId = selectedAreaId;
+      if (isTeamLeader) {
+        params.teamId = user && user.teamId ? (user.teamId._id || user.teamId) : '';
+      } else {
+        if (selectedTeamId) params.teamId = selectedTeamId;
+      }
+
+      if (targetMemberId) params.targetMemberId = targetMemberId;
+      if (selectedAreaId) params.targetAreaId = selectedAreaId;
 
       const res = await api.get('/api/reports/whatsapp-summary', params);
       if (res && res.success && res.text) {
@@ -119,7 +205,28 @@ export default function Reports() {
     if (activeTab === 'whatsapp') {
       generateWhatsAppReport();
     }
-  }, [reportFormat, singleDate, rangeFrom, rangeTo, breakdown, selectedTeamId, selectedAreaId, activeTab]);
+  }, [
+    reportType,
+    dateScope,
+    singleDate,
+    rangeFrom,
+    rangeTo,
+    selectedTeamId,
+    targetMemberId,
+    selectedAreaId,
+    includeHeader,
+    includeSummary,
+    includeProgressBar,
+    includeTopPerformers,
+    includeBreakdown,
+    includeCollectionRanking,
+    includeHandoverStatus,
+    includeZeroActivity,
+    includeOfflineNotice,
+    includeFooter,
+    customNote,
+    activeTab
+  ]);
 
   // Share on WhatsApp
   const handleShareWhatsApp = async () => {
@@ -324,163 +431,406 @@ export default function Reports() {
             <span class="badge badge-success" style="font-size: 11px;">SSF Report Style</span>
           </div>
 
-          <!-- Format Choice: Daily vs Overall -->
+          <!-- 1. Report Type Selection -->
           <div style="margin-bottom: 14px;">
-            <label class="form-label" style="font-size: 13px; font-weight: 600;">1. Select Report Type</label>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+            <label class="form-label" style="font-size: 13px; font-weight: 700; color: var(--text);">
+              1. Choose Report Type
+            </label>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px;">
               <button
                 type="button"
-                onClick=${() => setReportFormat('daily')}
-                style="padding: 10px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; text-align: left; border: ${reportFormat === 'daily' ? '2px solid #25D366' : '1px solid var(--border)'}; background: ${reportFormat === 'daily' ? '#DCFCE7' : 'var(--bg)'}; color: ${reportFormat === 'daily' ? '#166534' : 'var(--text)'};"
+                onClick=${() => {
+                  setReportType('daily');
+                  setDateScope('today');
+                  applyPreset('default');
+                }}
+                style="padding: 10px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; text-align: left; border: ${reportType === 'daily' ? '2px solid #25D366' : '1px solid var(--border)'}; background: ${reportType === 'daily' ? '#DCFCE7' : 'var(--bg)'}; color: ${reportType === 'daily' ? '#166534' : 'var(--text)'};"
               >
                 <div style="font-weight: 700;">📅 Daily Campaign</div>
-                <div style="font-size: 11px; opacity: 0.8; margin-top: 2px;">Day totals, breakdown & notes</div>
+                <div style="font-size: 10.5px; opacity: 0.8; margin-top: 1px;">Day summary & rankings</div>
               </button>
 
               <button
                 type="button"
-                onClick=${() => setReportFormat('overall')}
-                style="padding: 10px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; text-align: left; border: ${reportFormat === 'overall' ? '2px solid #25D366' : '1px solid var(--border)'}; background: ${reportFormat === 'overall' ? '#DCFCE7' : 'var(--bg)'}; color: ${reportFormat === 'overall' ? '#166534' : 'var(--text)'};"
+                onClick=${() => {
+                  setReportType('overall');
+                  setDateScope('all_time');
+                  applyPreset('default');
+                }}
+                style="padding: 10px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; text-align: left; border: ${reportType === 'overall' ? '2px solid #25D366' : '1px solid var(--border)'}; background: ${reportType === 'overall' ? '#DCFCE7' : 'var(--bg)'}; color: ${reportType === 'overall' ? '#166534' : 'var(--text)'};"
               >
                 <div style="font-weight: 700;">🏆 Overall Progress</div>
-                <div style="font-size: 11px; opacity: 0.8; margin-top: 2px;">Rankings, targets & % progress</div>
+                <div style="font-size: 10.5px; opacity: 0.8; margin-top: 1px;">Cumulative target % & ranks</div>
               </button>
+
+              <button
+                type="button"
+                onClick=${() => {
+                  setReportType('team');
+                  applyPreset('default');
+                }}
+                style="padding: 10px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; text-align: left; border: ${reportType === 'team' ? '2px solid #25D366' : '1px solid var(--border)'}; background: ${reportType === 'team' ? '#DCFCE7' : 'var(--bg)'}; color: ${reportType === 'team' ? '#166534' : 'var(--text)'};"
+              >
+                <div style="font-weight: 700;">👥 Team Report</div>
+                <div style="font-size: 10.5px; opacity: 0.8; margin-top: 1px;">Specific team performance</div>
+              </button>
+
+              <button
+                type="button"
+                onClick=${() => {
+                  setReportType('member');
+                  applyPreset('default');
+                }}
+                style="padding: 10px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; text-align: left; border: ${reportType === 'member' ? '2px solid #25D366' : '1px solid var(--border)'}; background: ${reportType === 'member' ? '#DCFCE7' : 'var(--bg)'}; color: ${reportType === 'member' ? '#166534' : 'var(--text)'};"
+              >
+                <div style="font-weight: 700;">👤 Member Report</div>
+                <div style="font-size: 10.5px; opacity: 0.8; margin-top: 1px;">Individual member metrics</div>
+              </button>
+
+              <button
+                type="button"
+                onClick=${() => {
+                  setReportType('area');
+                  applyPreset('default');
+                }}
+                style="padding: 10px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; text-align: left; border: ${reportType === 'area' ? '2px solid #25D366' : '1px solid var(--border)'}; background: ${reportType === 'area' ? '#DCFCE7' : 'var(--bg)'}; color: ${reportType === 'area' ? '#166534' : 'var(--text)'};"
+              >
+                <div style="font-weight: 700;">📍 Area Report</div>
+                <div style="font-size: 10.5px; opacity: 0.8; margin-top: 1px;">Geographic distribution</div>
+              </button>
+
+              ${(isSuperOrUsthad || isTeamLeader) ? html`
+                <button
+                  type="button"
+                  onClick=${() => {
+                    setReportType('handover');
+                    applyPreset('default');
+                  }}
+                  style="padding: 10px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; text-align: left; border: ${reportType === 'handover' ? '2px solid #25D366' : '1px solid var(--border)'}; background: ${reportType === 'handover' ? '#DCFCE7' : 'var(--bg)'}; color: ${reportType === 'handover' ? '#166534' : 'var(--text)'};"
+                >
+                  <div style="font-weight: 700;">💰 Handover Report</div>
+                  <div style="font-size: 10.5px; opacity: 0.8; margin-top: 1px;">Cash transfer audit & bank</div>
+                </button>
+              ` : ''}
             </div>
           </div>
 
-          <!-- Date Selector -->
-          ${reportFormat === 'daily' ? html`
-            <div style="margin-bottom: 14px;">
-              <label class="form-label" style="font-size: 13px; font-weight: 600;">2. Date Selection</label>
-              <div style="display: flex; gap: 6px; margin-bottom: 8px;">
-                <button
-                  type="button"
-                  class="btn btn-sm ${selectedDatePreset === 'today' ? 'btn-primary' : 'btn-secondary'}"
-                  style="flex: 1; padding: 6px;"
-                  onClick=${() => handleDatePreset('today')}
-                >
-                  Today
-                </button>
-                <button
-                  type="button"
-                  class="btn btn-sm ${selectedDatePreset === 'yesterday' ? 'btn-primary' : 'btn-secondary'}"
-                  style="flex: 1; padding: 6px;"
-                  onClick=${() => handleDatePreset('yesterday')}
-                >
-                  Yesterday
-                </button>
-                <button
-                  type="button"
-                  class="btn btn-sm ${selectedDatePreset === 'custom' ? 'btn-primary' : 'btn-secondary'}"
-                  style="flex: 1; padding: 6px;"
-                  onClick=${() => handleDatePreset('custom')}
-                >
-                  Custom Date
-                </button>
-              </div>
+          <!-- 2. Date & Scope Filters -->
+          <div style="background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 14px;">
+            <label class="form-label" style="font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 6px;">
+              2. Date & Scope Selection
+            </label>
 
-              <input
-                type="date"
-                class="form-input"
-                value=${singleDate}
-                onInput=${(e) => {
-                  setSingleDate(e.target.value);
-                  setSelectedDatePreset('custom');
-                }}
-              />
+            <!-- Date Preset Tabs -->
+            <div style="display: flex; gap: 4px; margin-bottom: 8px; flex-wrap: wrap;">
+              <button
+                type="button"
+                class="btn btn-sm ${dateScope === 'today' ? 'btn-primary' : 'btn-secondary'}"
+                style="padding: 5px 9px; font-size: 11px;"
+                onClick=${() => handleDatePreset('today')}
+              >
+                Today
+              </button>
+              <button
+                type="button"
+                class="btn btn-sm ${dateScope === 'yesterday' ? 'btn-primary' : 'btn-secondary'}"
+                style="padding: 5px 9px; font-size: 11px;"
+                onClick=${() => handleDatePreset('yesterday')}
+              >
+                Yesterday
+              </button>
+              <button
+                type="button"
+                class="btn btn-sm ${dateScope === 'specific_date' ? 'btn-primary' : 'btn-secondary'}"
+                style="padding: 5px 9px; font-size: 11px;"
+                onClick=${() => setDateScope('specific_date')}
+              >
+                Specific Date
+              </button>
+              <button
+                type="button"
+                class="btn btn-sm ${dateScope === 'date_range' ? 'btn-primary' : 'btn-secondary'}"
+                style="padding: 5px 9px; font-size: 11px;"
+                onClick=${() => setDateScope('date_range')}
+              >
+                Date Range
+              </button>
+              <button
+                type="button"
+                class="btn btn-sm ${dateScope === 'all_time' ? 'btn-primary' : 'btn-secondary'}"
+                style="padding: 5px 9px; font-size: 11px;"
+                onClick=${() => setDateScope('all_time')}
+              >
+                Entire Campaign
+              </button>
             </div>
-          ` : html`
-            <div style="margin-bottom: 14px;">
-              <label class="form-label" style="font-size: 13px; font-weight: 600;">2. Date Range</label>
-              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+
+            <!-- Conditional Date Pickers -->
+            ${dateScope === 'specific_date' || dateScope === 'today' || dateScope === 'yesterday' ? html`
+              <div style="margin-bottom: 8px;">
+                <input
+                  type="date"
+                  class="form-input"
+                  style="padding: 7px 10px; font-size: 13px;"
+                  value=${singleDate}
+                  onInput=${(e) => {
+                    setSingleDate(e.target.value);
+                    setDateScope('specific_date');
+                  }}
+                />
+              </div>
+            ` : dateScope === 'date_range' ? html`
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
                 <div>
-                  <span style="font-size: 11px; color: var(--text-secondary); display: block; margin-bottom: 2px;">From (Optional)</span>
+                  <span style="font-size: 11px; color: var(--text-secondary); display: block; margin-bottom: 2px;">From Date</span>
                   <input
                     type="date"
                     class="form-input"
-                    style="padding: 8px;"
+                    style="padding: 7px 10px; font-size: 12px;"
                     value=${rangeFrom}
                     onInput=${(e) => setRangeFrom(e.target.value)}
                   />
                 </div>
                 <div>
-                  <span style="font-size: 11px; color: var(--text-secondary); display: block; margin-bottom: 2px;">To (Optional)</span>
+                  <span style="font-size: 11px; color: var(--text-secondary); display: block; margin-bottom: 2px;">To Date</span>
                   <input
                     type="date"
                     class="form-input"
-                    style="padding: 8px;"
+                    style="padding: 7px 10px; font-size: 12px;"
                     value=${rangeTo}
                     onInput=${(e) => setRangeTo(e.target.value)}
                   />
                 </div>
               </div>
-            </div>
-          `}
+            ` : ''}
 
-          <!-- Breakdown / Scope Selection -->
-          <div style="margin-bottom: 14px;">
-            <label class="form-label" style="font-size: 13px; font-weight: 600;">3. Statistics Grouping</label>
-            <div style="display: flex; gap: 6px;">
-              <button
-                type="button"
-                class="btn btn-sm ${breakdown === 'team' ? 'btn-primary' : 'btn-secondary'}"
-                style="flex: 1; padding: 6px;"
-                onClick=${() => setBreakdown('team')}
-              >
-                👥 By Team
-              </button>
-              <button
-                type="button"
-                class="btn btn-sm ${breakdown === 'area' ? 'btn-primary' : 'btn-secondary'}"
-                style="flex: 1; padding: 6px;"
-                onClick=${() => setBreakdown('area')}
-              >
-                📍 By Area
-              </button>
-              <button
-                type="button"
-                class="btn btn-sm ${breakdown === 'member' ? 'btn-primary' : 'btn-secondary'}"
-                style="flex: 1; padding: 6px;"
-                onClick=${() => setBreakdown('member')}
-              >
-                👤 By Member
-              </button>
-            </div>
-          </div>
-
-          <!-- Specific Filters for Super Admin / Usthad -->
-          ${isSuperOrUsthad ? html`
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px;">
-              <div>
-                <label class="form-label" style="font-size: 12px;">Team Filter</label>
+            <!-- Scope Targets based on Report Type -->
+            ${isTeamLeader ? html`
+              <div style="margin-top: 8px; padding: 10px 12px; background: rgba(8,145,178,0.08); border-radius: 8px; border: 1px solid var(--border);">
+                <div style="font-size: 11px; font-weight: 700; color: var(--text-light); text-transform: uppercase;">Team Leader Scope</div>
+                <div style="font-size: 13.5px; font-weight: 700; color: var(--primary); margin-top: 2px;">
+                  👥 ${user.teamId && (user.teamId.name || user.teamId) ? (user.teamId.name || user.teamId) : 'My Team'}
+                </div>
+                <div style="font-size: 11px; color: var(--text-light); margin-top: 2px;">
+                  Authorized to generate and share WhatsApp report for your own team only.
+                </div>
+              </div>
+            ` : ((reportType === 'team' || isSuperOrUsthad) ? html`
+              <div style="margin-top: 6px;">
+                <label style="font-size: 11.5px; font-weight: 600; color: var(--text); display: block; margin-bottom: 3px;">
+                  ${reportType === 'team' ? 'Select Target Team *' : 'Team Filter (Optional)'}
+                </label>
                 <select
                   class="form-input"
-                  style="padding: 8px;"
+                  style="padding: 7px 10px; font-size: 13px;"
                   value=${selectedTeamId}
                   onChange=${(e) => setSelectedTeamId(e.target.value)}
                 >
-                  <option value="">All Teams</option>
+                  <option value="">${reportType === 'team' ? '-- Choose Team --' : 'All Teams'}</option>
                   ${teams.map((t) => html`<option key=${t._id} value=${t._id}>${t.name}</option>`)}
                 </select>
               </div>
+            ` : '')}
 
-              <div>
-                <label class="form-label" style="font-size: 12px;">Area Filter</label>
+            ${reportType === 'member' ? html`
+              <div style="margin-top: 6px;">
+                <label style="font-size: 11.5px; font-weight: 600; color: var(--text); display: block; margin-bottom: 3px;">
+                  Select Target Member *
+                </label>
                 <select
                   class="form-input"
-                  style="padding: 8px;"
+                  style="padding: 7px 10px; font-size: 13px;"
+                  value=${targetMemberId}
+                  onChange=${(e) => setTargetMemberId(e.target.value)}
+                >
+                  <option value="">-- Choose Member --</option>
+                  ${membersList.map((m) => html`
+                    <option key=${m._id} value=${m._id}>
+                      ${m.fullName} (${m.role.replace('_', ' ')})
+                    </option>
+                  `)}
+                </select>
+              </div>
+            ` : ''}
+
+            ${reportType === 'area' || isSuperOrUsthad ? html`
+              <div style="margin-top: 6px;">
+                <label style="font-size: 11.5px; font-weight: 600; color: var(--text); display: block; margin-bottom: 3px;">
+                  ${reportType === 'area' ? 'Select Target Area *' : 'Area Filter (Optional)'}
+                </label>
+                <select
+                  class="form-input"
+                  style="padding: 7px 10px; font-size: 13px;"
                   value=${selectedAreaId}
                   onChange=${(e) => setSelectedAreaId(e.target.value)}
                 >
-                  <option value="">All Areas</option>
+                  <option value="">${reportType === 'area' ? '-- Choose Area --' : 'All Areas'}</option>
                   ${areas.map((a) => html`<option key=${a._id} value=${a._id}>${a.name}</option>`)}
                 </select>
               </div>
+            ` : ''}
+          </div>
+
+          <!-- 3. Granular Report Sections (Checkboxes) -->
+          <div style="margin-bottom: 14px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <label class="form-label" style="font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 0;">
+                3. Customize Sections
+              </label>
+              <!-- Quick Presets -->
+              <div style="display: flex; gap: 4px;">
+                <button
+                  type="button"
+                  class="btn btn-secondary btn-sm"
+                  style="padding: 3px 7px; font-size: 10.5px;"
+                  onClick=${() => applyPreset('default')}
+                  title="Reset to recommended sections for this report"
+                >
+                  Default
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-secondary btn-sm"
+                  style="padding: 3px 7px; font-size: 10.5px;"
+                  onClick=${() => applyPreset('executive')}
+                  title="Top-level summary and progress bar only"
+                >
+                  Executive
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-secondary btn-sm"
+                  style="padding: 3px 7px; font-size: 10.5px;"
+                  onClick=${() => applyPreset('detailed')}
+                  title="Include all available breakdowns and metrics"
+                >
+                  Detailed
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-secondary btn-sm"
+                  style="padding: 3px 7px; font-size: 10.5px;"
+                  onClick=${() => applyPreset('minimal')}
+                  title="Compact minimal summary"
+                >
+                  Minimal
+                </button>
+              </div>
             </div>
-          ` : ''}
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 12.5px;">
+              <label style="display: flex; align-items: center; gap: 7px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; background: var(--bg-card);">
+                <input
+                  type="checkbox"
+                  checked=${includeHeader}
+                  onChange=${(e) => setIncludeHeader(e.target.checked)}
+                />
+                <span>Header & Logo</span>
+              </label>
+
+              <label style="display: flex; align-items: center; gap: 7px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; background: var(--bg-card);">
+                <input
+                  type="checkbox"
+                  checked=${includeSummary}
+                  onChange=${(e) => setIncludeSummary(e.target.checked)}
+                />
+                <span>Key Summary Totals</span>
+              </label>
+
+              <label style="display: flex; align-items: center; gap: 7px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; background: var(--bg-card);">
+                <input
+                  type="checkbox"
+                  checked=${includeProgressBar}
+                  onChange=${(e) => setIncludeProgressBar(e.target.checked)}
+                />
+                <span>Target Progress Bar [▓▓░░]</span>
+              </label>
+
+              <label style="display: flex; align-items: center; gap: 7px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; background: var(--bg-card);">
+                <input
+                  type="checkbox"
+                  checked=${includeTopPerformers}
+                  onChange=${(e) => setIncludeTopPerformers(e.target.checked)}
+                />
+                <span>Top Performers 🥇🥈🥉</span>
+              </label>
+
+              <label style="display: flex; align-items: center; gap: 7px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; background: var(--bg-card);">
+                <input
+                  type="checkbox"
+                  checked=${includeBreakdown}
+                  onChange=${(e) => setIncludeBreakdown(e.target.checked)}
+                />
+                <span>Calendar Leaderboard (Highest to Lowest)</span>
+              </label>
+
+              ${(isSuperOrUsthad || isTeamLeader) ? html`
+                <label style="display: flex; align-items: center; gap: 7px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; background: var(--bg-card);">
+                  <input
+                    type="checkbox"
+                    checked=${includeCollectionRanking}
+                    onChange=${(e) => setIncludeCollectionRanking(e.target.checked)}
+                  />
+                  <span>Collection Ranking (₹ Highest to Lowest)</span>
+                </label>
+              ` : ''}
+
+              ${(isSuperOrUsthad || isTeamLeader) ? html`
+                <label style="display: flex; align-items: center; gap: 7px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; background: var(--bg-card);">
+                  <input
+                    type="checkbox"
+                    checked=${includeHandoverStatus}
+                    onChange=${(e) => setIncludeHandoverStatus(e.target.checked)}
+                  />
+                  <span>Handover & Cash Status</span>
+                </label>
+              ` : ''}
+
+              <label style="display: flex; align-items: center; gap: 7px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; background: var(--bg-card);">
+                <input
+                  type="checkbox"
+                  checked=${includeZeroActivity}
+                  onChange=${(e) => setIncludeZeroActivity(e.target.checked)}
+                />
+                <span>Include Zero-Activity Units</span>
+              </label>
+
+              <label style="display: flex; align-items: center; gap: 7px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; background: var(--bg-card);">
+                <input
+                  type="checkbox"
+                  checked=${includeOfflineNotice}
+                  onChange=${(e) => setIncludeOfflineNotice(e.target.checked)}
+                />
+                <span>Offline Sync Notice</span>
+              </label>
+
+              <label style="display: flex; align-items: center; gap: 7px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; background: var(--bg-card);">
+                <input
+                  type="checkbox"
+                  checked=${includeFooter}
+                  onChange=${(e) => setIncludeFooter(e.target.checked)}
+                />
+                <span>Islamic Dua & Footer</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- 4. Custom Closing Note -->
+          <div style="margin-bottom: 14px;">
+            <label class="form-label" style="font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 4px;">
+              4. Custom Closing Announcement (Optional)
+            </label>
+            <input
+              type="text"
+              class="form-input"
+              placeholder="e.g. Camp review meeting tomorrow 8 PM at Markaz auditorium"
+              value=${customNote}
+              onInput=${(e) => setCustomNote(e.target.value)}
+            />
+          </div>
 
           <!-- Direct Primary Action Buttons -->
-          <div style="display: grid; grid-template-columns: 1.2fr 1fr; gap: 8px; margin-top: 6px;">
+          <div style="display: grid; grid-template-columns: 1.3fr 1fr auto; gap: 8px; margin-top: 8px;">
             <button
               type="button"
               class="btn btn-success"
@@ -500,6 +850,16 @@ export default function Reports() {
             >
               <span>${copied ? '✓ Copied!' : '📋 Copy Report'}</span>
             </button>
+
+            <button
+              type="button"
+              class="btn btn-secondary"
+              style="padding: 0 12px; font-size: 14px;"
+              onClick=${generateWhatsAppReport}
+              title="Refresh Preview"
+            >
+              🔄
+            </button>
           </div>
         </div>
 
@@ -512,7 +872,7 @@ export default function Reports() {
               <div>
                 <div style="font-size: 13px; font-weight: 700; line-height: 1.2;">WhatsApp Message Preview</div>
                 <div style="font-size: 11px; opacity: 0.85;">
-                  ${reportFormat === 'daily' ? 'Daily Campaign Bulletin' : 'Progress & Leaderboard'}
+                  ${reportType === 'daily' ? 'Daily Campaign Bulletin' : reportType === 'overall' ? 'Cumulative Progress Report' : reportType === 'team' ? 'Team Performance Report' : reportType === 'member' ? 'Individual Member Report' : reportType === 'area' ? 'Area-wise Report' : 'Financial Handover Report'}
                 </div>
               </div>
             </div>

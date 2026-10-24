@@ -1,7 +1,7 @@
 /**
- * WhatsApp Report Formatter for Life Skill Course Campaign
- * Inspired by structured SSF Membership Campaign WhatsApp bulletins:
- * Clean, compact, emoji-balanced, WhatsApp markdown compatible (*bold*, _italic_).
+ * WhatsApp Report Builder & Formatter for Life Skill Course Campaign
+ * Markazul Hidayathil Islamiyya — Annual Calendar Camp
+ * WhatsApp markdown compatible (*bold*, _italic_), clean layout, dynamic data.
  */
 
 export function formatINR(val) {
@@ -14,14 +14,14 @@ export function formatQty(val) {
   return num.toLocaleString('en-IN');
 }
 
-function makeProgressBar(percent) {
-  const p = Math.max(0, Math.min(100, Number(percent) || 0));
-  const filledCount = Math.round((p / 100) * 10);
-  const emptyCount = 10 - filledCount;
-  return `[${'█'.repeat(filledCount)}${'░'.repeat(emptyCount)}] ${p.toFixed(1)}%`;
+export function formatRankBadge(rank) {
+  if (rank === 1) return '🥇 1. ';
+  if (rank === 2) return '🥈 2. ';
+  if (rank === 3) return '🥉 3. ';
+  return `${rank}. `;
 }
 
-function getMedal(rank) {
+export function getMedal(rank) {
   if (rank === 1) return '🥇 ';
   if (rank === 2) return '🥈 ';
   if (rank === 3) return '🥉 ';
@@ -29,141 +29,196 @@ function getMedal(rank) {
 }
 
 /**
- * Generate Daily Campaign Report
+ * Assigns competition ranks with tie handling: equal totals share rank, next rank skips.
  */
-export function buildDailyReport({
-  dateStr,
+export function assignRanks(list, valueKey = 'distributed') {
+  if (!list || !list.length) return [];
+  const sorted = [...list].sort((a, b) => (b[valueKey] || 0) - (a[valueKey] || 0));
+  let currentRank = 1;
+  return sorted.map((item, idx, arr) => {
+    if (idx > 0 && (item[valueKey] || 0) < (arr[idx - 1][valueKey] || 0)) {
+      currentRank = idx + 1;
+    }
+    return { ...item, rank: currentRank };
+  });
+}
+
+/**
+ * Custom WhatsApp Report Builder matching exact Life Skill Course specifications:
+ * - Dynamic actual figures (never dummy data)
+ * - Excludes unapproved entries from official counts and rankings
+ * - Clean section toggles (Header, Summary, Team Performance, Rankings, Handover/Cash, Totals)
+ * - Strict team scoping for Team Leaders
+ */
+export function buildCustomWhatsAppReport({
+  reportType = 'daily', // 'daily' | 'overall' | 'team' | 'member' | 'area'
+  dateStr = '',
   scopeTitle = 'All Teams (Campaign-Wide)',
   role = 'super_admin',
-  items = [], // [{ name, distributed, collected, transferred }]
-  totals = { distributed: 0, collected: 0, transferred: 0, areasCount: 0, membersCount: 0 },
-  offlinePendingCount = 0
+  campaignConfig = { totalStock: 5000, calendarPrice: 100 },
+  teamsData = [], // [{ name, distributed, collected, members: [{ name, distributed, collected }] }]
+  items = [], // fallback flat items if teamsData is not structured
+  totals = {
+    distributed: 0,
+    collected: 0,
+    transferred: 0,
+    teamsCount: 0,
+    membersCount: 0,
+    areasCount: 0
+  },
+  offlinePendingCount = 0,
+  sections = {
+    includeHeader: true,
+    includeSummary: true,
+    includeBreakdown: true,
+    includeLeaderboard: true,
+    includeCollectionRanking: false,
+    includeHandoverStatus: true,
+    includeZeroActivity: false,
+    includeOfflineNotice: true,
+    includeFooter: true
+  },
+  customNote = '',
+  customFooterNote = ''
 }) {
-  const pendingHandover = Math.max(0, totals.collected - totals.transferred);
-  const divider = '━━━━━━━━━━━━━━━━━━━━';
+  const note = (customNote || customFooterNote || '').trim();
+  const lines = [];
 
-  let lines = [
-    `📊 *MARKAZUL HIDAYATHIL ISLAMIYYA*`,
-    `*LIFE SKILL COURSE — DAILY CAMPAIGN REPORT*`,
-    divider,
-    `📅 *Date:* ${dateStr}`,
-    `🎯 *Scope:* ${scopeTitle}`,
-    divider,
-    ``,
-    `*📊 DAILY BREAKDOWN & ACTIVITY*`
-  ];
+  const canViewFinancials = ['super_admin', 'usthad', 'team_leader'].includes(role);
+  const isSingleTeam = reportType === 'team' || role === 'team_leader' || (teamsData && teamsData.length === 1);
 
-  if (!items || items.length === 0) {
-    lines.push(`_No distributions or collections recorded for this date._`);
-  } else {
-    items.forEach((item, index) => {
-      const num = index + 1;
-      const dist = formatQty(item.distributed);
-      const col = formatINR(item.collected);
-      lines.push(`${num}. *${item.name}*`);
-      lines.push(`   📦 ${dist} calendars  |  💰 ${col}`);
-      if (item.transferred > 0) {
-        lines.push(`   ✅ Handed Over: ${formatINR(item.transferred)}`);
-      }
-    });
-  }
-
-  lines.push(``);
-  lines.push(divider);
-  lines.push(`*📈 DAILY SUMMARY TOTALS*`);
-  lines.push(`📦 Calendars Distributed: *${formatQty(totals.distributed)}*`);
-  lines.push(`💰 Total Collected: *${formatINR(totals.collected)}*`);
-  lines.push(`✅ Confirmed Handed Over: *${formatINR(totals.transferred)}*`);
-  lines.push(`⏳ In-Hand / Pending Handover: *${formatINR(pendingHandover)}*`);
-  if (totals.areasCount > 0) {
-    lines.push(`📍 Areas Visited: *${totals.areasCount}*`);
-  }
-  if (totals.membersCount > 0) {
-    lines.push(`👥 Active Field Members: *${totals.membersCount}*`);
-  }
-
-  if (offlinePendingCount > 0) {
+  // 1. Header
+  if (sections.includeHeader !== false) {
+    lines.push(`📅 *LIFE SKILL COURSE — CALENDAR CAMP*`);
     lines.push(``);
-    lines.push(`⚠️ _Note: Includes ${offlinePendingCount} local offline entries waiting to sync._`);
+    lines.push(`Date: ${dateStr || new Date().toLocaleDateString('en-IN')}`);
+    lines.push(``);
   }
 
-  lines.push(divider);
-  lines.push(`✨ *Markazul Hidayathil Islamiyya*`);
-  lines.push(`_Annual Calendar Camp Management Portal_`);
+  // 2. Summary
+  if (sections.includeSummary !== false) {
+    if (isSingleTeam && teamsData.length === 1) {
+      lines.push(`📊 *TEAM SUMMARY*`);
+      lines.push(``);
+      lines.push(`- Team: ${teamsData[0].name}`);
+      lines.push(`- Calendars Distributed/Sold Today: ${formatQty(totals.distributed)}`);
+      lines.push(`- Today's Collection: ${formatINR(totals.collected)}`);
+    } else {
+      lines.push(`📊 *OVERALL SUMMARY*`);
+      lines.push(``);
+      lines.push(`- Total Teams: ${totals.teamsCount || teamsData.length || 0}`);
+      lines.push(`- Calendars Distributed/Sold Today: ${formatQty(totals.distributed)}`);
+      lines.push(`- Today's Collection: ${formatINR(totals.collected)}`);
+    }
+
+    if (sections.includeHandoverStatus && canViewFinancials) {
+      const inHandCash = Math.max(0, (totals.collected || 0) - (totals.transferred || 0));
+      lines.push(`- In-Hand Cash: ${formatINR(inHandCash)}`);
+      if (totals.transferred > 0) {
+        lines.push(`- Confirmed Handover: ${formatINR(totals.transferred)}`);
+      }
+    }
+    lines.push(``);
+  }
+
+  // 3. Team-wise performance & Member Rankings
+  if (sections.includeBreakdown !== false || sections.includeLeaderboard !== false) {
+    if (teamsData && teamsData.length > 0) {
+      if (!isSingleTeam) {
+        lines.push(`🏆 *TEAM-WISE PERFORMANCE*`);
+        lines.push(``);
+      }
+
+      teamsData.forEach((team, tIdx) => {
+        // Filter members with zero activity if requested
+        let members = team.members || [];
+        if (!sections.includeZeroActivity) {
+          members = members.filter((m) => (m.distributed || 0) > 0 || (m.collected || 0) > 0);
+        }
+
+        const teamHeading = isSingleTeam
+          ? `🏆 *${team.name} PERFORMANCE*`
+          : `*Team ${tIdx + 1} — ${team.name}*`;
+
+        lines.push(teamHeading);
+        lines.push(``);
+        lines.push(`- Calendars Distributed/Sold Today: ${formatQty(team.distributed)}`);
+        lines.push(`- Today's Collection: ${formatINR(team.collected)}`);
+        lines.push(``);
+
+        // Calendar Ranking
+        if (sections.includeLeaderboard !== false) {
+          lines.push(`Calendar Ranking`);
+          const rankedByDist = assignRanks(members, 'distributed');
+          if (rankedByDist.length === 0) {
+            lines.push(`_No approved calendar distributions recorded._`);
+          } else {
+            rankedByDist.forEach((m) => {
+              lines.push(`${formatRankBadge(m.rank)}${m.name} — ${formatQty(m.distributed)} calendars`);
+            });
+          }
+          lines.push(``);
+        }
+
+        // Optional Collection Ranking
+        if (sections.includeCollectionRanking && canViewFinancials) {
+          lines.push(`Collection Ranking`);
+          const rankedByCol = assignRanks(members, 'collected');
+          if (rankedByCol.length === 0) {
+            lines.push(`_No approved collections recorded._`);
+          } else {
+            rankedByCol.forEach((m) => {
+              lines.push(`${formatRankBadge(m.rank)}${m.name} — ${formatINR(m.collected)}`);
+            });
+          }
+          lines.push(``);
+        }
+      });
+    } else if (items && items.length > 0) {
+      // Fallback flat items ranking
+      lines.push(`🏆 *PERFORMANCE RANKING*`);
+      lines.push(``);
+      const rankedItems = assignRanks(items, 'distributed');
+      rankedItems.forEach((m) => {
+        lines.push(`${formatRankBadge(m.rank)}${m.name} — ${formatQty(m.distributed)} calendars`);
+      });
+      lines.push(``);
+    }
+  }
+
+  // 4. Campaign Total or Team Total
+  if (sections.includeSummary !== false) {
+    const totalTitle = isSingleTeam ? `📌 *TEAM TOTAL*` : `📌 *CAMPAIGN TOTAL*`;
+    lines.push(totalTitle);
+    lines.push(``);
+    lines.push(`- Total Calendars Distributed/Sold Today: ${formatQty(totals.distributed)}`);
+    lines.push(`- Total Collection Today: ${formatINR(totals.collected)}`);
+  }
+
+  // 5. Offline sync note
+  if (sections.includeOfflineNotice !== false && offlinePendingCount > 0) {
+    lines.push(``);
+    lines.push(`⚠️ _Note: Includes ${offlinePendingCount} local offline entries pending sync._`);
+  }
+
+  // 6. Custom Note & Footer
+  if (note) {
+    lines.push(``);
+    lines.push(`📝 *Note:* ${note}`);
+  }
+
+  if (sections.includeFooter !== false) {
+    lines.push(``);
+    lines.push(`_Markazul Hidayathil Islamiyya_`);
+  }
 
   return lines.join('\n');
 }
 
-/**
- * Generate Overall Progress Report with Leaderboard Rankings
- */
-export function buildOverallReport({
-  timestampStr,
-  scopeTitle = 'All Teams (Campaign-Wide)',
-  role = 'super_admin',
-  campaignConfig = { totalStock: 5000, calendarPrice: 100 },
-  rankedItems = [], // [{ name, distributed, collected, transferred, rank }]
-  totals = { distributed: 0, collected: 0, transferred: 0, teamsCount: 0, membersCount: 0, areasCount: 0 },
-  offlinePendingCount = 0
-}) {
-  const divider = '━━━━━━━━━━━━━━━━━━━━';
-  const totalStock = campaignConfig.totalStock || 5000;
-  const remainingStock = Math.max(0, totalStock - totals.distributed);
-  const completionPercent = totalStock > 0 ? (totals.distributed / totalStock) * 100 : 0;
-  const pendingHandover = Math.max(0, totals.collected - totals.transferred);
-  const progressBar = makeProgressBar(completionPercent);
+export function buildDailyReport(options) {
+  return buildCustomWhatsAppReport({ reportType: 'daily', ...options });
+}
 
-  let lines = [
-    `🏆 *MARKAZUL HIDAYATHIL ISLAMIYYA*`,
-    `*LIFE SKILL COURSE — OVERALL PROGRESS REPORT*`,
-    divider,
-    `🕒 *As on:* ${timestampStr}`,
-    `🎯 *Scope:* ${scopeTitle}`,
-    divider,
-    ``,
-    `*📌 OVERALL CAMPAIGN STATUS*`,
-    `📦 Total Campaign Target: *${formatQty(totalStock)}*`,
-    `📤 Distributed to Date: *${formatQty(totals.distributed)}* (${completionPercent.toFixed(1)}%)`,
-    `📦 Remaining Stock: *${formatQty(remainingStock)}*`,
-    `📊 Progress: ${progressBar}`,
-    `💰 Total Collections: *${formatINR(totals.collected)}*`,
-    `✅ Confirmed Handovers: *${formatINR(totals.transferred)}*`,
-    `⏳ Pending Handover Balance: *${formatINR(pendingHandover)}*`,
-    ``,
-    divider,
-    `*🏅 LEADERBOARD & RANKINGS*`
-  ];
-
-  if (!rankedItems || rankedItems.length === 0) {
-    lines.push(`_No progress data recorded yet._`);
-  } else {
-    // Dense ranked list
-    rankedItems.forEach((item) => {
-      const prefix = getMedal(item.rank);
-      const share = totals.distributed > 0 ? ((item.distributed / totals.distributed) * 100).toFixed(1) : '0.0';
-      lines.push(`${prefix}*${item.name}*`);
-      lines.push(`   📦 ${formatQty(item.distributed)} (${share}%)  |  💰 ${formatINR(item.collected)}`);
-      if (item.transferred > 0) {
-        lines.push(`   ✅ Handed: ${formatINR(item.transferred)}`);
-      }
-    });
-  }
-
-  lines.push(``);
-  lines.push(divider);
-  lines.push(`*👥 PARTICIPATION SUMMARY*`);
-  if (totals.teamsCount > 0) lines.push(`🏷️ Active Teams: *${totals.teamsCount}*`);
-  if (totals.membersCount > 0) lines.push(`👤 Total Active Members: *${totals.membersCount}*`);
-  if (totals.areasCount > 0) lines.push(`📍 Visited Areas: *${totals.areasCount}*`);
-
-  if (offlinePendingCount > 0) {
-    lines.push(``);
-    lines.push(`⚠️ _Note: Includes ${offlinePendingCount} local offline entries waiting to sync._`);
-  }
-
-  lines.push(divider);
-  lines.push(`✨ *Markazul Hidayathil Islamiyya*`);
-  lines.push(`_Leadership & Life Skill Development Camp_`);
-
-  return lines.join('\n');
+export function buildOverallReport(options) {
+  return buildCustomWhatsAppReport({ reportType: 'overall', ...options });
 }

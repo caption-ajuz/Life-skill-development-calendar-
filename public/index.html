@@ -17,6 +17,40 @@
   <script src="/socket.io/socket.io.js" onerror="console.warn('Socket.io offline fallback')"></script>
   <!-- Zero-CDN, Instant Offline-Ready Standalone Engine (13KB) -->
   <script type="module">
+    // Immediately purge any stale caches from previous versions (e.g., lsc-v2)
+    try {
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        let deletedLegacy = false;
+        for (const k of keys) {
+          if (!k.startsWith('lsc-v6')) {
+            await caches.delete(k);
+            deletedLegacy = true;
+          }
+        }
+        if (deletedLegacy && !sessionStorage.getItem('lsc_v6_reloaded')) {
+          sessionStorage.setItem('lsc_v6_reloaded', '1');
+          window.location.reload();
+        }
+      }
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.addEventListener('message', (ev) => {
+          if (ev.data?.type === 'SW_CACHE_UPGRADED') {
+            window.location.reload();
+          }
+        });
+        const regs = await navigator.serviceWorker.getRegistrations();
+        for (const reg of regs) {
+          reg.update().catch(() => {});
+          if (reg.waiting) {
+            reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Cache cleanup note:', e);
+    }
+
     import * as lib from '/vendor/preact-htm.js';
     
     window.preact = { h: lib.h, render: lib.render, Component: lib.Component, createContext: lib.createContext };
@@ -79,20 +113,20 @@
       overscroll-behavior: none;
     }
     
-    /* Loading screen */
+    /* Loading screen (Bright Light Mode matching logo brand colors) */
     #loading {
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
       height: 100vh;
-      background: linear-gradient(135deg, #0891b2, #1d4ed8);
-      color: white;
+      background: radial-gradient(circle at 50% -10%, #e0f2fe 0%, #f0f9ff 40%, #f8fafc 100%);
+      color: #0f172a;
     }
-    #loading img { width: 80px; height: 80px; border-radius: 16px; margin-bottom: 16px; object-fit: contain; background: white; padding: 8px; }
-    #loading h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
-    #loading p { font-size: 14px; opacity: 0.8; }
-    .spinner { width: 32px; height: 32px; border: 3px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 0.8s linear infinite; margin-top: 24px; }
+    #loading img { width: 76px; height: 76px; border-radius: 18px; margin-bottom: 16px; object-fit: contain; background: white; padding: 6px; box-shadow: 0 8px 24px rgba(2,132,199,0.15); border: 1.5px solid #e0f2fe; }
+    #loading h1 { font-size: 21px; font-weight: 800; margin-bottom: 4px; letter-spacing: -0.3px; color: #0f172a; }
+    #loading p { font-size: 13.5px; color: #0284c7; font-weight: 600; }
+    .spinner { width: 32px; height: 32px; border: 3px solid #e2e8f0; border-top-color: #0284c7; border-radius: 50%; animation: spin 0.8s linear infinite; margin-top: 22px; }
     @keyframes spin { to { transform: rotate(360deg); } }
     
     /* App shell styles */

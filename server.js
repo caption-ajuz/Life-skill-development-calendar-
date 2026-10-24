@@ -11,7 +11,7 @@ import { Server as SocketIOServer } from 'socket.io';
 import bcrypt from 'bcryptjs';
 import mongoose from 'mongoose';
 
-import connectDB from './server/config/db.js';
+import connectDB, { getDbStatus } from './server/config/db.js';
 import User from './server/models/User.js';
 import CampaignConfig from './server/models/CampaignConfig.js';
 import { mockFallbackMiddleware } from './server/middleware/mockData.js';
@@ -67,9 +67,19 @@ app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Static Assets
+// Static Assets with no-cache on SW, HTML, and JS modules to prevent stale mobile caches
 const publicDir = path.join(__dirname, 'public');
-app.use(express.static(publicDir));
+app.use(
+  express.static(publicDir, {
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('.html') || filePath.endsWith('.js') || filePath.endsWith('sw.js')) {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+      }
+    }
+  })
+);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -77,6 +87,14 @@ app.get('/api/health', (req, res) => {
     status: 'healthy',
     timestamp: new Date().toISOString(),
     service: 'Life Skill Course API'
+  });
+});
+
+// Database Connection Status endpoint (Green = Connected, Red = Fallback with diagnostic details)
+app.get('/api/db-status', (req, res) => {
+  res.json({
+    success: true,
+    data: getDbStatus()
   });
 });
 

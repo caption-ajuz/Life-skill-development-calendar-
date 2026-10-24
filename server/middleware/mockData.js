@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken';
 import mongoose from 'mongoose';
-import { buildDailyReport, buildOverallReport } from '../utils/whatsappReports.js';
+import { buildDailyReport, buildOverallReport, buildCustomWhatsAppReport } from '../utils/whatsappReports.js';
+import { getDbStatus } from '../config/db.js';
 
 // In-memory fallback dataset for offline/preview mode
 const mockStore = {
@@ -179,23 +180,25 @@ const mockStore = {
       _id: '65f000000000000000000051',
       quantity: 50,
       date: new Date().toISOString(),
-      memberId: { fullName: 'Ahmed Bilal', phone: '9876543212' },
-      teamId: { name: 'Al-Huda Team' },
+      memberId: { _id: '65f000000000000000000003', fullName: 'Ahmed Bilal', phone: '9876543212' },
+      teamId: { _id: '65f000000000000000000011', name: 'Al-Huda Team' },
       areaId: { name: 'Downtown Commercial', district: 'Central' },
       recipientName: 'City Center Bookstore',
       recipientPhone: '9876543290',
-      status: 'active'
+      status: 'approved',
+      approvalStatus: 'approved'
     },
     {
       _id: '65f000000000000000000052',
       quantity: 30,
       date: new Date().toISOString(),
-      memberId: { fullName: 'Zaid Rahman', phone: '9876543213' },
-      teamId: { name: 'Al-Huda Team' },
+      memberId: { _id: '65f000000000000000000004', fullName: 'Zaid Rahman', phone: '9876543213' },
+      teamId: { _id: '65f000000000000000000011', name: 'Al-Huda Team' },
       areaId: { name: 'Riverside Residential', district: 'North' },
       recipientName: 'Community Library',
       recipientPhone: '9876543291',
-      status: 'active'
+      status: 'approved',
+      approvalStatus: 'approved'
     }
   ],
   collections: [
@@ -203,21 +206,23 @@ const mockStore = {
       _id: '65f000000000000000000061',
       amount: 5000,
       date: new Date().toISOString(),
-      memberId: { fullName: 'Ahmed Bilal', phone: '9876543212' },
-      teamId: { name: 'Al-Huda Team' },
+      memberId: { _id: '65f000000000000000000003', fullName: 'Ahmed Bilal', phone: '9876543212' },
+      teamId: { _id: '65f000000000000000000011', name: 'Al-Huda Team' },
       areaId: { name: 'Downtown Commercial', district: 'Central' },
       collectedFrom: 'City Center Bookstore',
-      status: 'active'
+      status: 'approved',
+      approvalStatus: 'approved'
     },
     {
       _id: '65f000000000000000000062',
       amount: 3000,
       date: new Date().toISOString(),
-      memberId: { fullName: 'Zaid Rahman', phone: '9876543213' },
-      teamId: { name: 'Al-Huda Team' },
+      memberId: { _id: '65f000000000000000000004', fullName: 'Zaid Rahman', phone: '9876543213' },
+      teamId: { _id: '65f000000000000000000011', name: 'Al-Huda Team' },
       areaId: { name: 'Riverside Residential', district: 'North' },
       collectedFrom: 'Community Library',
-      status: 'active'
+      status: 'approved',
+      approvalStatus: 'approved'
     }
   ],
   transfers: [
@@ -314,6 +319,11 @@ export function mockFallbackMiddleware(req, res, next) {
     }
   };
 
+  // Database Connection Status endpoint
+  if (path === '/db-status' && method === 'GET') {
+    return res.json({ success: true, data: getDbStatus() });
+  }
+
   // Auth: /api/auth/*
   if (path === '/auth/login' && method === 'POST') {
     const { username, password, phone, pin } = req.body || {};
@@ -365,9 +375,30 @@ export function mockFallbackMiddleware(req, res, next) {
       maxAge: 7 * 24 * 60 * 60 * 1000
     });
 
+    const safeUser = { ...user };
+    delete safeUser.passwordHint;
+    delete safeUser.pinHint;
+
     return res.json({
       success: true,
-      data: { user, token }
+      data: {
+        user: { ...safeUser, mustChangePassword: Boolean(user.mustChangePassword) },
+        token,
+        mustChangePassword: Boolean(user.mustChangePassword)
+      }
+    });
+  }
+
+  if (path === '/auth/first-login-change-password' && method === 'POST') {
+    const user = getUserFromToken();
+    user.mustChangePassword = false;
+    const safeUser = { ...user };
+    delete safeUser.passwordHint;
+    delete safeUser.pinHint;
+    return res.json({
+      success: true,
+      message: 'Password updated successfully. Welcome to your dashboard!',
+      data: safeUser
     });
   }
 
@@ -381,7 +412,10 @@ export function mockFallbackMiddleware(req, res, next) {
       return res.status(401).json({ success: false, error: 'Unauthorized.' });
     }
     const user = getUserFromToken();
-    return res.json({ success: true, data: user });
+    const safeUser = { ...user };
+    delete safeUser.passwordHint;
+    delete safeUser.pinHint;
+    return res.json({ success: true, data: safeUser });
   }
 
   if (path === '/auth/logout' && method === 'POST') {
@@ -390,6 +424,8 @@ export function mockFallbackMiddleware(req, res, next) {
   }
 
   if (path === '/auth/change-password' && method === 'PUT') {
+    const user = getUserFromToken();
+    user.mustChangePassword = false;
     return res.json({ success: true, message: 'Password updated successfully.' });
   }
 
@@ -541,28 +577,146 @@ export function mockFallbackMiddleware(req, res, next) {
   // Users: /api/users/*
   if (path === '/users' || path === '/users/') {
     if (method === 'GET') {
+      const safeUsers = mockStore.users.map(u => {
+        const copy = { ...u };
+        delete copy.passwordHint;
+        delete copy.pinHint;
+        return copy;
+      });
       return res.json({
         success: true,
         data: {
-          users: mockStore.users,
+          users: safeUsers,
           pagination: { total: mockStore.users.length, page: 1, limit: 50, pages: 1 }
         }
       });
     }
     if (method === 'POST') {
+      const caller = getUserFromToken();
+      let role = req.body.role || 'team_member';
+      let teamObj = req.body.teamId ? mockStore.teams.find(t => t._id === req.body.teamId) : null;
+
+      // Strict scoping for Team Leader:
+      if (caller.role === 'team_leader') {
+        role = 'team_member';
+        teamObj = caller.teamId ? mockStore.teams.find(t => t._id === (caller.teamId._id || caller.teamId)) : mockStore.teams[0];
+      }
+
+      const tempPassword = req.body.password || `LSC@${Math.floor(1000 + Math.random() * 9000)}`;
       const newUser = {
         _id: '65f0000000000000000000' + (mockStore.users.length + 5),
         username: (req.body.username || '').toLowerCase().trim(),
         fullName: req.body.fullName || 'New Member',
         phone: req.body.phone || '9876543299',
-        role: req.body.role || 'team_member',
-        teamId: req.body.teamId ? mockStore.teams.find(t => t._id === req.body.teamId) : null,
+        role,
+        teamId: teamObj,
+        mustChangePassword: true,
         isActive: true,
+        passwordHint: tempPassword,
+        pinHint: req.body.pin ? req.body.pin.trim() : null,
         createdAt: new Date().toISOString()
       };
       mockStore.users.push(newUser);
-      return res.status(201).json({ success: true, data: newUser });
+
+      const safeUser = { ...newUser };
+      delete safeUser.passwordHint;
+      delete safeUser.pinHint;
+
+      return res.status(201).json({
+        success: true,
+        data: safeUser,
+        initialCredentials: {
+          username: newUser.username,
+          temporaryPassword: tempPassword,
+          pin: newUser.pinHint,
+          mustChangePassword: true
+        }
+      });
     }
+  }
+
+  // Individual Member Profile
+  if (path.startsWith('/users/') && path.endsWith('/profile') && method === 'GET') {
+    const id = path.split('/')[2];
+    const user = mockStore.users.find(u => u._id === id) || mockStore.users[3];
+    const safeUser = { ...user };
+    delete safeUser.passwordHint;
+    delete safeUser.pinHint;
+
+    const userDist = mockStore.distributions.filter(d => d.memberId && (d.memberId._id === user._id || d.memberId.fullName === user.fullName));
+    const userCol = mockStore.collections.filter(c => c.memberId && (c.memberId._id === user._id || c.memberId.fullName === user.fullName));
+    const userTrans = mockStore.transfers.filter(t => t.fromUserId && (t.fromUserId._id === user._id || t.fromUserId.fullName === user.fullName));
+    const userExp = mockStore.expenses.filter(e => e.memberId === user._id || (e.createdBy && e.createdBy._id === user._id));
+
+    const distributedStock = userDist.reduce((s, d) => s + (d.quantity || 0), 0) || 180;
+    const calendarCollections = userCol.reduce((s, c) => s + (c.amount || 0), 0) || 18000;
+    const confirmedTransfers = userTrans.filter(t => t.status === 'confirmed').reduce((s, t) => s + (t.amount || 0), 0) || 15000;
+    const pendingTransfers = userTrans.filter(t => t.status === 'pending').reduce((s, t) => s + (t.amount || 0), 0) || 2000;
+    const totalExpenses = userExp.reduce((s, e) => s + (e.amount || 0), 0) || 0;
+
+    return res.json({
+      success: true,
+      data: {
+        user: safeUser,
+        stats: {
+          allocatedStock: distributedStock + 70,
+          distributedStock,
+          remainingStock: 70,
+          calendarCollections,
+          otherIncome: 0,
+          totalCollected: calendarCollections,
+          confirmedTransfers,
+          pendingTransfers,
+          inHandCash: Math.max(0, calendarCollections - confirmedTransfers - pendingTransfers),
+          totalExpenses
+        },
+        activity: {
+          distributions: userDist.length > 0 ? userDist : mockStore.distributions,
+          collections: userCol.length > 0 ? userCol : mockStore.collections,
+          transfers: userTrans.length > 0 ? userTrans : mockStore.transfers,
+          expenses: userExp
+        }
+      }
+    });
+  }
+
+  // Toggle active/inactive
+  if (path.startsWith('/users/') && path.endsWith('/toggle-active') && method === 'PUT') {
+    const id = path.split('/')[2];
+    const user = mockStore.users.find(u => u._id === id);
+    if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
+    user.isActive = !user.isActive;
+    return res.json({ success: true, data: { id: user._id, isActive: user.isActive } });
+  }
+
+  // Reset password
+  if (path.startsWith('/users/') && path.endsWith('/reset-password') && method === 'PUT') {
+    const id = path.split('/')[2];
+    const user = mockStore.users.find(u => u._id === id);
+    if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
+    const tempPassword = req.body.newPassword || `LSC@${Math.floor(1000 + Math.random() * 9000)}`;
+    user.passwordHint = tempPassword;
+    user.mustChangePassword = true;
+    return res.json({
+      success: true,
+      message: 'Temporary password generated successfully.',
+      temporaryPassword: tempPassword,
+      mustChangePassword: true
+    });
+  }
+
+  // Reset PIN
+  if (path.startsWith('/users/') && path.endsWith('/reset-pin') && method === 'PUT') {
+    const id = path.split('/')[2];
+    const user = mockStore.users.find(u => u._id === id);
+    if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
+    const cleanPin = req.body.newPin ? req.body.newPin.trim() : String(Math.floor(1000 + Math.random() * 9000));
+    user.pinHint = cleanPin;
+    return res.json({
+      success: true,
+      message: 'PIN reset successfully.',
+      temporaryPin: cleanPin
+    });
   }
 
   if (path.startsWith('/users/') && path.endsWith('/credentials') && method === 'PUT') {
@@ -576,13 +730,17 @@ export function mockFallbackMiddleware(req, res, next) {
       user.passwordHint = '';
     } else if (password) {
       user.passwordHint = password;
+      user.mustChangePassword = false;
     }
     if (clearPin) {
       user.pinHint = '';
     } else if (pin) {
       user.pinHint = pin.trim();
     }
-    return res.json({ success: true, message: 'Credentials updated successfully.', data: user });
+    const safeUser = { ...user };
+    delete safeUser.passwordHint;
+    delete safeUser.pinHint;
+    return res.json({ success: true, message: 'Credentials updated successfully.', data: safeUser });
   }
 
   if (path.startsWith('/users/') && path.endsWith('/password') && method === 'DELETE') {
@@ -762,26 +920,113 @@ export function mockFallbackMiddleware(req, res, next) {
   }
 
   // Distributions: /api/distributions/*
+  if (path.startsWith('/distributions/') && path.endsWith('/approve') && method === 'PUT') {
+    const user = getUserFromToken();
+    if (user.role === 'team_member') {
+      return res.status(403).json({ success: false, error: 'Team members are not authorized to approve entries.' });
+    }
+    const id = path.split('/')[2];
+    const dist = mockStore.distributions.find(d => d._id === id);
+    if (!dist) return res.status(404).json({ success: false, error: 'Distribution record not found.' });
+
+    if (user.role === 'team_leader') {
+      const uTeamId = user.teamId ? (user.teamId._id || user.teamId) : null;
+      const dTeamId = dist.teamId ? (dist.teamId._id || dist.teamId) : null;
+      if (uTeamId !== dTeamId) {
+        return res.status(403).json({ success: false, error: 'You are only authorized to review and approve entries for your own team.' });
+      }
+    }
+
+    dist.approvalStatus = 'approved';
+    dist.status = 'approved';
+    dist.approvedBy = { fullName: user.fullName, role: user.role };
+    dist.approvedAt = new Date().toISOString();
+    dist.rejectionReason = '';
+    return res.json({ success: true, message: 'Distribution entry approved successfully.', data: dist });
+  }
+
+  if (path.startsWith('/distributions/') && path.endsWith('/reject') && method === 'PUT') {
+    const user = getUserFromToken();
+    if (user.role === 'team_member') {
+      return res.status(403).json({ success: false, error: 'Team members are not authorized to reject entries.' });
+    }
+    if (!req.body.reason || !req.body.reason.trim()) {
+      return res.status(400).json({ success: false, error: 'A specific reason is required to reject an entry.' });
+    }
+    const id = path.split('/')[2];
+    const dist = mockStore.distributions.find(d => d._id === id);
+    if (!dist) return res.status(404).json({ success: false, error: 'Distribution record not found.' });
+
+    if (user.role === 'team_leader') {
+      const uTeamId = user.teamId ? (user.teamId._id || user.teamId) : null;
+      const dTeamId = dist.teamId ? (dist.teamId._id || dist.teamId) : null;
+      if (uTeamId !== dTeamId) {
+        return res.status(403).json({ success: false, error: 'You are only authorized to review and reject entries for your own team.' });
+      }
+    }
+
+    dist.approvalStatus = 'rejected';
+    dist.status = 'rejected';
+    dist.rejectionReason = req.body.reason.trim();
+    dist.approvedBy = { fullName: user.fullName, role: user.role };
+    dist.approvedAt = new Date().toISOString();
+    return res.json({ success: true, message: 'Distribution entry rejected.', data: dist });
+  }
+
+  if (path.startsWith('/distributions/') && path.endsWith('/resubmit') && method === 'PUT') {
+    const id = path.split('/')[2];
+    const dist = mockStore.distributions.find(d => d._id === id);
+    if (!dist) return res.status(404).json({ success: false, error: 'Distribution record not found.' });
+    if (req.body.quantity) dist.quantity = parseInt(req.body.quantity, 10);
+    if (req.body.notes !== undefined) dist.notes = req.body.notes;
+    dist.approvalStatus = 'pending';
+    dist.status = 'pending';
+    dist.rejectionReason = '';
+    return res.json({ success: true, message: 'Entry resubmitted for approval.', data: dist });
+  }
+
   if (path === '/distributions' || path === '/distributions/') {
     if (method === 'GET') {
+      const user = getUserFromToken();
+      let list = mockStore.distributions;
+      if (user.role === 'team_member') {
+        list = list.filter(d => d.memberId && (d.memberId._id === user._id || d.memberId.fullName === user.fullName));
+      } else if (user.role === 'team_leader') {
+        const uTeamId = user.teamId ? (user.teamId._id || user.teamId) : null;
+        list = list.filter(d => {
+          const dTeamId = d.teamId ? (d.teamId._id || d.teamId) : null;
+          return uTeamId && dTeamId ? uTeamId === dTeamId : true;
+        });
+      }
+      if (req.query.approvalStatus) {
+        list = list.filter(d => d.approvalStatus === req.query.approvalStatus);
+      }
       return res.json({
         success: true,
         data: {
-          distributions: mockStore.distributions,
-          pagination: { total: mockStore.distributions.length, page: 1, limit: 50, pages: 1 }
+          distributions: list,
+          pagination: { total: list.length, page: 1, limit: 50, pages: 1 }
         }
       });
     }
     if (method === 'POST') {
+      const user = getUserFromToken();
+      const isAuto = ['super_admin', 'usthad'].includes(user.role);
+      const initialStatus = isAuto ? 'approved' : 'pending';
+      const userTeam = user.teamId || mockStore.teams[0];
       const newDist = {
         _id: '65f0000000000000000000' + (mockStore.distributions.length + 55),
         quantity: parseInt(req.body.quantity, 10) || 1,
         date: req.body.date || new Date().toISOString(),
-        memberId: { fullName: 'Super Admin', phone: '9876543210' },
-        teamId: { name: 'Al-Huda Team' },
+        memberId: { _id: user._id, fullName: user.fullName, phone: user.phone },
+        teamId: { _id: userTeam._id || userTeam, name: userTeam.name || 'Al-Huda Team' },
         areaId: { name: req.body.areaName || 'Downtown Commercial', district: 'Central' },
         recipientName: req.body.recipientName || 'General Recipient',
-        status: 'active'
+        notes: req.body.notes || '',
+        status: initialStatus,
+        approvalStatus: initialStatus,
+        approvedBy: isAuto ? { fullName: user.fullName, role: user.role } : null,
+        approvedAt: isAuto ? new Date().toISOString() : null
       };
       mockStore.distributions.unshift(newDist);
       return res.status(201).json({ success: true, data: newDist });
@@ -789,26 +1034,113 @@ export function mockFallbackMiddleware(req, res, next) {
   }
 
   // Collections: /api/collections/*
+  if (path.startsWith('/collections/') && path.endsWith('/approve') && method === 'PUT') {
+    const user = getUserFromToken();
+    if (user.role === 'team_member') {
+      return res.status(403).json({ success: false, error: 'Team members are not authorized to approve entries.' });
+    }
+    const id = path.split('/')[2];
+    const col = mockStore.collections.find(c => c._id === id);
+    if (!col) return res.status(404).json({ success: false, error: 'Collection record not found.' });
+
+    if (user.role === 'team_leader') {
+      const uTeamId = user.teamId ? (user.teamId._id || user.teamId) : null;
+      const cTeamId = col.teamId ? (col.teamId._id || col.teamId) : null;
+      if (uTeamId !== cTeamId) {
+        return res.status(403).json({ success: false, error: 'You are only authorized to review and approve entries for your own team.' });
+      }
+    }
+
+    col.approvalStatus = 'approved';
+    col.status = 'approved';
+    col.approvedBy = { fullName: user.fullName, role: user.role };
+    col.approvedAt = new Date().toISOString();
+    col.rejectionReason = '';
+    return res.json({ success: true, message: 'Collection entry approved successfully.', data: col });
+  }
+
+  if (path.startsWith('/collections/') && path.endsWith('/reject') && method === 'PUT') {
+    const user = getUserFromToken();
+    if (user.role === 'team_member') {
+      return res.status(403).json({ success: false, error: 'Team members are not authorized to reject entries.' });
+    }
+    if (!req.body.reason || !req.body.reason.trim()) {
+      return res.status(400).json({ success: false, error: 'A specific reason is required to reject an entry.' });
+    }
+    const id = path.split('/')[2];
+    const col = mockStore.collections.find(c => c._id === id);
+    if (!col) return res.status(404).json({ success: false, error: 'Collection record not found.' });
+
+    if (user.role === 'team_leader') {
+      const uTeamId = user.teamId ? (user.teamId._id || user.teamId) : null;
+      const cTeamId = col.teamId ? (col.teamId._id || col.teamId) : null;
+      if (uTeamId !== cTeamId) {
+        return res.status(403).json({ success: false, error: 'You are only authorized to review and reject entries for your own team.' });
+      }
+    }
+
+    col.approvalStatus = 'rejected';
+    col.status = 'rejected';
+    col.rejectionReason = req.body.reason.trim();
+    col.approvedBy = { fullName: user.fullName, role: user.role };
+    col.approvedAt = new Date().toISOString();
+    return res.json({ success: true, message: 'Collection entry rejected.', data: col });
+  }
+
+  if (path.startsWith('/collections/') && path.endsWith('/resubmit') && method === 'PUT') {
+    const id = path.split('/')[2];
+    const col = mockStore.collections.find(c => c._id === id);
+    if (!col) return res.status(404).json({ success: false, error: 'Collection record not found.' });
+    if (req.body.amount !== undefined) col.amount = parseFloat(req.body.amount);
+    if (req.body.notes !== undefined) col.notes = req.body.notes;
+    col.approvalStatus = 'pending';
+    col.status = 'pending';
+    col.rejectionReason = '';
+    return res.json({ success: true, message: 'Collection resubmitted for approval.', data: col });
+  }
+
   if (path === '/collections' || path === '/collections/') {
     if (method === 'GET') {
+      const user = getUserFromToken();
+      let list = mockStore.collections;
+      if (user.role === 'team_member') {
+        list = list.filter(c => c.memberId && (c.memberId._id === user._id || c.memberId.fullName === user.fullName));
+      } else if (user.role === 'team_leader') {
+        const uTeamId = user.teamId ? (user.teamId._id || user.teamId) : null;
+        list = list.filter(c => {
+          const cTeamId = c.teamId ? (c.teamId._id || c.teamId) : null;
+          return uTeamId && cTeamId ? uTeamId === cTeamId : true;
+        });
+      }
+      if (req.query.approvalStatus) {
+        list = list.filter(c => c.approvalStatus === req.query.approvalStatus);
+      }
       return res.json({
         success: true,
         data: {
-          collections: mockStore.collections,
-          pagination: { total: mockStore.collections.length, page: 1, limit: 50, pages: 1 }
+          collections: list,
+          pagination: { total: list.length, page: 1, limit: 50, pages: 1 }
         }
       });
     }
     if (method === 'POST') {
+      const user = getUserFromToken();
+      const isAuto = ['super_admin', 'usthad'].includes(user.role);
+      const initialStatus = isAuto ? 'approved' : 'pending';
+      const userTeam = user.teamId || mockStore.teams[0];
       const newCol = {
         _id: '65f0000000000000000000' + (mockStore.collections.length + 65),
         amount: parseFloat(req.body.amount) || 100,
         date: req.body.date || new Date().toISOString(),
-        memberId: { fullName: 'Super Admin', phone: '9876543210' },
-        teamId: { name: 'Al-Huda Team' },
+        memberId: { _id: user._id, fullName: user.fullName, phone: user.phone },
+        teamId: { _id: userTeam._id || userTeam, name: userTeam.name || 'Al-Huda Team' },
         areaId: { name: req.body.areaName || 'Downtown Commercial', district: 'Central' },
         collectedFrom: req.body.collectedFrom || 'Donor / Buyer',
-        status: 'active'
+        notes: req.body.notes || '',
+        status: initialStatus,
+        approvalStatus: initialStatus,
+        approvedBy: isAuto ? { fullName: user.fullName, role: user.role } : null,
+        approvedAt: isAuto ? new Date().toISOString() : null
       };
       mockStore.collections.unshift(newCol);
       return res.status(201).json({ success: true, data: newCol });
@@ -876,104 +1208,145 @@ export function mockFallbackMiddleware(req, res, next) {
   // Reports: /api/reports/whatsapp-summary
   if (path === '/reports/whatsapp-summary' || path.startsWith('/reports/whatsapp-summary')) {
     const {
+      reportType,
       reportFormat = 'daily',
       date,
       breakdown = 'team',
       teamId,
       areaId,
-      offlineCount = 0
+      offlineCount = 0,
+      sections: rawSections,
+      customFooterNote
     } = req.query;
+
+    const activeReportType = reportType || reportFormat || 'daily';
+
+    let parsedSections = {
+      includeHeader: true,
+      includeSummary: true,
+      includeLeaderboard: true,
+      includeBreakdown: true,
+      includeTopPerformers: true,
+      includeHandoverStatus: true,
+      includeProgressBar: true,
+      includeZeroActivity: false,
+      includeOfflineNotice: true,
+      includeFooter: true
+    };
+
+    if (typeof rawSections === 'string') {
+      try {
+        parsedSections = { ...parsedSections, ...JSON.parse(rawSections) };
+      } catch {}
+    } else if (rawSections && typeof rawSections === 'object') {
+      parsedSections = { ...parsedSections, ...rawSections };
+    }
+
+    [
+      'includeHeader',
+      'includeSummary',
+      'includeLeaderboard',
+      'includeBreakdown',
+      'includeTopPerformers',
+      'includeHandoverStatus',
+      'includeProgressBar',
+      'includeZeroActivity',
+      'includeOfflineNotice',
+      'includeFooter'
+    ].forEach((k) => {
+      if (req.query[k] !== undefined) {
+        parsedSections[k] = req.query[k] === 'true' || req.query[k] === true;
+      }
+    });
 
     const user = getUserFromToken();
     const d = date ? new Date(date) : new Date();
-    const displayDateStr = reportFormat === 'daily'
+    const displayDateStr = activeReportType === 'daily'
       ? d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
       : new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
-    let scopeTitle = 'Campaign-Wide (All Teams)';
-    let items = [];
+    const isTeamLeader = user.role === 'team_leader';
+    const isTeamMember = user.role === 'team_member';
+    let scopedTeamId = null;
 
-    if (user.role === 'team_member') {
-      scopeTitle = `Member: ${user.fullName}`;
-      items = [{
-        name: user.fullName,
-        distributed: 180,
-        collected: 18000,
-        transferred: 15000,
-        rank: 1
-      }];
-    } else if (user.role === 'team_leader' || breakdown === 'member') {
-      const team = mockStore.teams.find(t => t._id === teamId) || mockStore.teams[0];
-      scopeTitle = `Team: ${team.name}`;
-      items = [
-        { name: 'Ahmed Bilal', distributed: 180, collected: 18000, transferred: 15000, rank: 1 },
-        { name: 'Zaid Rahman', distributed: 150, collected: 15000, transferred: 12000, rank: 2 },
-        { name: 'Rashid Ali', distributed: 120, collected: 12000, transferred: 8000, rank: 3 }
-      ];
-    } else if (breakdown === 'area') {
-      scopeTitle = areaId ? `Area: ${(mockStore.areas.find(a => a._id === areaId) || {}).name || 'Selected Area'}` : 'Area-Wise Breakdown';
-      items = mockStore.areas.map((a, idx) => ({
-        name: `${a.name} (${a.district})`,
-        distributed: a.totalDistributed || (400 - idx * 50),
-        collected: a.totalCollected || (40000 - idx * 5000),
-        transferred: Math.round((a.totalCollected || 30000) * 0.8),
-        rank: idx + 1
-      }));
-    } else {
-      // Default: team breakdown
-      items = mockStore.teams.map((t, idx) => ({
+    if (isTeamMember || isTeamLeader) {
+      // Strictly enforce team leader and member scope to their own team only
+      scopedTeamId = user.teamId ? (user.teamId._id || user.teamId) : mockStore.teams[0]._id;
+    } else if (teamId) {
+      scopedTeamId = teamId;
+    }
+
+    let relevantTeams = mockStore.teams;
+    if (scopedTeamId) {
+      relevantTeams = mockStore.teams.filter(t => t._id === scopedTeamId);
+      if (relevantTeams.length === 0) relevantTeams = [mockStore.teams[0]];
+    }
+
+    let scopeTitle = scopedTeamId
+      ? `Team: ${relevantTeams[0].name}`
+      : 'Campaign-Wide (All Teams)';
+
+    // Build structured teamsData excluding unapproved entries
+    const teamsData = relevantTeams.map(t => {
+      const teamUsers = mockStore.users.filter(u => u.teamId && (u.teamId._id === t._id || u.teamId === t._id));
+      const members = teamUsers.map(u => {
+        const approvedDists = mockStore.distributions.filter(d =>
+          (d.memberId && (d.memberId._id === u._id || d.memberId.fullName === u.fullName)) &&
+          (d.approvalStatus === 'approved' || d.status === 'approved')
+        );
+        const approvedCols = mockStore.collections.filter(c =>
+          (c.memberId && (c.memberId._id === u._id || c.memberId.fullName === u.fullName)) &&
+          (c.approvalStatus === 'approved' || c.status === 'approved')
+        );
+        return {
+          id: u._id,
+          name: u.fullName,
+          distributed: approvedDists.reduce((s, x) => s + (x.quantity || 0), 0),
+          collected: approvedCols.reduce((s, x) => s + (x.amount || 0), 0)
+        };
+      });
+
+      const teamDist = members.reduce((s, m) => s + m.distributed, 0);
+      const teamCol = members.reduce((s, m) => s + m.collected, 0);
+
+      return {
+        id: t._id,
         name: t.name,
-        distributed: t.totalDistributed,
-        collected: t.totalCollected,
-        transferred: Math.round(t.totalCollected * 0.8),
-        rank: idx + 1
-      }));
-    }
+        distributed: teamDist,
+        collected: teamCol,
+        members
+      };
+    });
 
-    const totalDistributed = items.reduce((s, x) => s + x.distributed, 0);
-    const totalCollected = items.reduce((s, x) => s + x.collected, 0);
-    const totalTransferred = items.reduce((s, x) => s + x.transferred, 0);
+    const totalDistributed = teamsData.reduce((s, t) => s + t.distributed, 0);
+    const totalCollected = teamsData.reduce((s, t) => s + t.collected, 0);
+    const totalTransferred = Math.round(totalCollected * 0.8);
 
-    let generatedText = '';
-    if (reportFormat === 'overall') {
-      generatedText = buildOverallReport({
-        timestampStr: displayDateStr,
-        scopeTitle,
-        role: user.role,
-        campaignConfig: mockStore.campaign,
-        rankedItems: items,
-        totals: {
-          distributed: totalDistributed,
-          collected: totalCollected,
-          transferred: totalTransferred,
-          teamsCount: mockStore.teams.length,
-          membersCount: mockStore.users.length,
-          areasCount: mockStore.areas.length
-        },
-        offlinePendingCount: parseInt(offlineCount, 10) || 0
-      });
-    } else {
-      generatedText = buildDailyReport({
-        dateStr: displayDateStr,
-        scopeTitle,
-        role: user.role,
-        items,
-        totals: {
-          distributed: totalDistributed,
-          collected: totalCollected,
-          transferred: totalTransferred,
-          areasCount: mockStore.areas.length,
-          membersCount: items.length
-        },
-        offlinePendingCount: parseInt(offlineCount, 10) || 0
-      });
-    }
+    const generatedText = buildCustomWhatsAppReport({
+      reportType: activeReportType,
+      dateStr: displayDateStr,
+      scopeTitle,
+      role: user.role,
+      campaignConfig: mockStore.campaign,
+      teamsData,
+      totals: {
+        distributed: totalDistributed,
+        collected: totalCollected,
+        transferred: totalTransferred,
+        teamsCount: mockStore.teams.length,
+        membersCount: mockStore.users.length,
+        areasCount: mockStore.areas.length
+      },
+      offlinePendingCount: parseInt(offlineCount, 10) || 0,
+      sections: parsedSections,
+      customFooterNote: customFooterNote || ''
+    });
 
     return res.json({
       success: true,
       text: generatedText,
       metadata: {
-        format: reportFormat,
+        reportType: activeReportType,
         displayDate: displayDateStr,
         scopeTitle,
         totals: {
@@ -981,7 +1354,8 @@ export function mockFallbackMiddleware(req, res, next) {
           collected: totalCollected,
           transferred: totalTransferred
         },
-        itemCount: items.length
+        sections: parsedSections,
+        teamCount: teamsData.length
       }
     });
   }

@@ -30,7 +30,12 @@ router.get('/', async (req, res) => {
     }
 
     if (areaId && isValidObjectId(areaId)) query.areaId = areaId;
-    if (status) query.status = status;
+    const { approvalStatus } = req.query;
+    if (approvalStatus) {
+      query.approvalStatus = approvalStatus;
+    } else if (status) {
+      query.status = status;
+    }
 
     if (dateFrom || dateTo) {
       query.date = {};
@@ -48,6 +53,7 @@ router.get('/', async (req, res) => {
         .populate('teamId', 'name')
         .populate('areaId', 'name district')
         .populate('createdBy', 'fullName')
+        .populate('approvedBy', 'fullName role')
         .sort({ date: -1, createdAt: -1 })
         .skip(skip)
         .limit(limitNum),
@@ -110,6 +116,9 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ success: false, error: 'User is not assigned to a team.' });
     }
 
+    const isAutoApproved = ['super_admin', 'usthad'].includes(req.user.role);
+    const initialStatus = isAutoApproved ? 'approved' : 'pending';
+
     const distribution = await Distribution.create({
       memberId,
       teamId,
@@ -119,14 +128,25 @@ router.post('/', async (req, res) => {
       notes: notes ? notes.trim() : '',
       clientId: clientId || undefined,
       createdBy: req.user._id,
-      status: 'active'
+      status: initialStatus,
+      approvalStatus: initialStatus,
+      approvedBy: isAutoApproved ? req.user._id : null,
+      approvedAt: isAutoApproved ? new Date() : null,
+      statusHistory: [
+        {
+          status: initialStatus,
+          changedBy: req.user._id,
+          changedAt: new Date(),
+          reason: isAutoApproved ? 'Auto-approved by admin/supervisor' : 'Submitted for review'
+        }
+      ]
     });
 
     await logAudit({
       entityType: 'distribution',
       entityId: distribution._id,
       action: 'create',
-      newValues: { quantity: qty, areaId, teamId, memberId },
+      newValues: { quantity: qty, areaId, teamId, memberId, approvalStatus: initialStatus },
       performedBy: req.user._id,
       ipAddress: req.ip
     });
@@ -137,7 +157,8 @@ router.post('/', async (req, res) => {
         id: distribution._id,
         teamId,
         memberId,
-        quantity: qty
+        quantity: qty,
+        approvalStatus: initialStatus
       });
     }
 
@@ -150,6 +171,193 @@ router.post('/', async (req, res) => {
     }
     console.error('Create distribution error:', err);
     return res.status(500).json({ success: false, error: 'Failed to record distribution.' });
+  }
+});
+
+// PUT /api/distributions/:id/approve - Approve distribution entry
+router.put('/:id/approve', async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!isValidObjectId(id)) {
+      return res.status(400).json({ success: false, error: 'Invalid distribution ID.' });
+    }
+
+    const dist = await Distribution.findById(id);
+    if (!dist) {
+      return res.status(404).json({ success: false, error: 'Distribution record not found.' });
+    }
+
+    // Authorization: Super Admin, Usthad, or Team Leader of the entry's team
+    if (req.user.role === 'team_member') {
+      return res.status(403).json({ success: false, error: 'Team members are not authorized to approve entries.' });
+    }
+
+    if (req.user.role === 'team_leader') {
+      const userTeamId = req.user.teamId ? (req.user.teamId._id || req.user.teamId).toString() : null;
+      if (!userTeamId || userTeamId !== dist.teamId.toString()) {
+        return res.status(403).json({ success: false, error: 'You are only authorized to review and approve entries for your own team.' });
+      }
+    }
+
+    if (dist.approvalStatus === 'approved') {
+      return res.json({ success: true, message: 'Entry is already approved.', data: dist });
+    }
+
+    dist.approvalStatus = 'approved';
+    dist.status = 'approved';
+    dist.approvedBy = req.user._id;
+    dist.approvedAt = new Date();
+    dist.rejectionReason = '';
+    dist.statusHistory.push({
+      status: 'approved',
+      changedBy: req.user._id,
+      changedAt: new Date(),
+      reason: req.body.notes || 'Approved by reviewer'
+    });
+
+    await dist.save();
+
+    await logAudit({
+      entityType: 'distribution',
+      entityId: dist._id,
+      action: 'approve',
+      newValues: { approvalStatus: 'approved' },
+      performedBy: req.user._id,
+      ipAddress: req.ip
+    });
+
+    const io = req.app.get('io');
+    if (io) io.emit('distribution:approved', { id: dist._id, teamId: dist.teamId });
+
+    return res.json({ success: true, message: 'Distribution entry approved successfully.', data: dist });
+  } catch (err) {
+    console.error('Approve distribution error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to approve distribution.' });
+  }
+});
+
+// PUT /api/distributions/:id/reject - Reject distribution entry with reason
+router.put('/:id/reject', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+
+    if (!isValidObjectId(id)) {
+      return res.status(400).json({ success: false, error: 'Invalid distribution ID.' });
+    }
+
+    if (!reason || !reason.trim()) {
+      return res.status(400).json({ success: false, error: 'A specific reason is required to reject an entry.' });
+    }
+
+    const dist = await Distribution.findById(id);
+    if (!dist) {
+      return res.status(404).json({ success: false, error: 'Distribution record not found.' });
+    }
+
+    if (req.user.role === 'team_member') {
+      return res.status(403).json({ success: false, error: 'Team members are not authorized to reject entries.' });
+    }
+
+    if (req.user.role === 'team_leader') {
+      const userTeamId = req.user.teamId ? (req.user.teamId._id || req.user.teamId).toString() : null;
+      if (!userTeamId || userTeamId !== dist.teamId.toString()) {
+        return res.status(403).json({ success: false, error: 'You are only authorized to review and reject entries for your own team.' });
+      }
+    }
+
+    dist.approvalStatus = 'rejected';
+    dist.status = 'rejected';
+    dist.rejectionReason = reason.trim();
+    dist.approvedBy = req.user._id;
+    dist.approvedAt = new Date();
+    dist.statusHistory.push({
+      status: 'rejected',
+      changedBy: req.user._id,
+      changedAt: new Date(),
+      reason: reason.trim()
+    });
+
+    await dist.save();
+
+    await logAudit({
+      entityType: 'distribution',
+      entityId: dist._id,
+      action: 'reject',
+      newValues: { approvalStatus: 'rejected', rejectionReason: reason.trim() },
+      performedBy: req.user._id,
+      ipAddress: req.ip
+    });
+
+    const io = req.app.get('io');
+    if (io) io.emit('distribution:rejected', { id: dist._id, teamId: dist.teamId });
+
+    return res.json({ success: true, message: 'Distribution entry rejected.', data: dist });
+  } catch (err) {
+    console.error('Reject distribution error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to reject distribution.' });
+  }
+});
+
+// PUT /api/distributions/:id/resubmit - Resubmit corrected entry
+router.put('/:id/resubmit', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { quantity, areaId, date, notes } = req.body;
+
+    if (!isValidObjectId(id)) {
+      return res.status(400).json({ success: false, error: 'Invalid distribution ID.' });
+    }
+
+    const dist = await Distribution.findById(id);
+    if (!dist) {
+      return res.status(404).json({ success: false, error: 'Distribution record not found.' });
+    }
+
+    // Only owner of entry, their team leader, or admin can resubmit
+    const isOwner = dist.memberId.toString() === req.user._id.toString();
+    const isAdmin = ['super_admin', 'usthad'].includes(req.user.role);
+    const userTeamId = req.user.teamId ? (req.user.teamId._id || req.user.teamId).toString() : null;
+    const isOwnLeader = req.user.role === 'team_leader' && userTeamId === dist.teamId.toString();
+
+    if (!isOwner && !isAdmin && !isOwnLeader) {
+      return res.status(403).json({ success: false, error: 'Unauthorized to resubmit this entry.' });
+    }
+
+    if (quantity !== undefined) {
+      const qty = parseInt(quantity, 10);
+      if (!qty || qty < 1) return res.status(400).json({ success: false, error: 'Quantity must be at least 1.' });
+      dist.quantity = qty;
+    }
+    if (areaId !== undefined) dist.areaId = isValidObjectId(areaId) ? areaId : null;
+    if (date !== undefined) dist.date = new Date(date);
+    if (notes !== undefined) dist.notes = notes.trim();
+
+    dist.approvalStatus = 'pending';
+    dist.status = 'pending';
+    dist.rejectionReason = '';
+    dist.statusHistory.push({
+      status: 'pending',
+      changedBy: req.user._id,
+      changedAt: new Date(),
+      reason: 'Resubmitted after correction'
+    });
+
+    await dist.save();
+
+    await logAudit({
+      entityType: 'distribution',
+      entityId: dist._id,
+      action: 'resubmit',
+      newValues: { quantity: dist.quantity, areaId: dist.areaId, date: dist.date },
+      performedBy: req.user._id,
+      ipAddress: req.ip
+    });
+
+    return res.json({ success: true, message: 'Entry resubmitted for approval.', data: dist });
+  } catch (err) {
+    console.error('Resubmit distribution error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to resubmit distribution.' });
   }
 });
 

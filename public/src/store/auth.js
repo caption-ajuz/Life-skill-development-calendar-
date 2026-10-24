@@ -27,7 +27,7 @@ export async function login(credentials) {
   const res = await api.post('/api/auth/login', credentials);
   if (res && res.success && res.data) {
     currentUser.value = res.data.user;
-    return res.data.user;
+    return res.data;
   }
   throw new Error((res && res.error) || 'Login failed.');
 }

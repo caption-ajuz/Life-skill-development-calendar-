@@ -5,7 +5,7 @@ const correctionSchema = new mongoose.Schema(
     entityType: {
       type: String,
       required: true,
-      enum: ['distribution', 'collection', 'transfer'],
+      enum: ['distribution', 'collection', 'transfer', 'expense'],
       index: true
     },
     entityId: {

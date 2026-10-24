@@ -56,6 +56,11 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: ''
     },
+    mustChangePassword: {
+      type: Boolean,
+      default: false,
+      index: true
+    },
     isActive: {
       type: Boolean,
       default: true,
@@ -71,11 +76,13 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-// Method to return safe JSON (omit passwordHash)
+// Method to return safe JSON (omit passwordHash, pinHash, and hints)
 userSchema.methods.toJSON = function () {
   const obj = this.toObject();
   delete obj.passwordHash;
   delete obj.pinHash;
+  delete obj.passwordHint;
+  delete obj.pinHint;
   return obj;
 };
 

@@ -72,15 +72,55 @@ export function SyncBar() {
 export function Navbar({ title }) {
   const [user, setUser] = useState(() => currentUser.value);
   const [status, setStatus] = useState(() => syncStatus.value);
+  const [dbStatus, setDbStatus] = useState({ connected: false, message: 'Checking...', details: '' });
+  const [showDbModal, setShowDbModal] = useState(false);
+  const [checkingDb, setCheckingDb] = useState(false);
+  const [longPressed, setLongPressed] = useState(false);
+
+  let pressTimer = null;
+
+  const fetchDbStatus = async () => {
+    setCheckingDb(true);
+    try {
+      const res = await fetch('/api/db-status');
+      const data = await res.json();
+      if (data && data.data) {
+        setDbStatus(data.data);
+      }
+    } catch (err) {
+      setDbStatus({
+        connected: false,
+        message: 'Could not connect to server',
+        details: 'Network error or server unreachable: ' + err.message
+      });
+    } finally {
+      setCheckingDb(false);
+    }
+  };
 
   useEffect(() => {
     const unsubUser = currentUser.subscribe ? currentUser.subscribe(setUser) : null;
     const unsubStatus = syncStatus.subscribe ? syncStatus.subscribe(setStatus) : null;
+    fetchDbStatus();
+    const interval = setInterval(fetchDbStatus, 30000);
     return () => {
       if (unsubUser) unsubUser();
       if (unsubStatus) unsubStatus();
+      clearInterval(interval);
     };
   }, []);
+
+  const handlePressStart = () => {
+    setLongPressed(false);
+    pressTimer = setTimeout(() => {
+      setLongPressed(true);
+      setShowDbModal(true);
+    }, 450);
+  };
+
+  const handlePressEnd = () => {
+    if (pressTimer) clearTimeout(pressTimer);
+  };
 
   const getSyncDot = () => {
     if (!status.isOnline) return html`<span title="Offline" style="width: 10px; height: 10px; border-radius: 50%; background: #fbbf24; display: inline-block;"></span>`;
@@ -93,18 +133,116 @@ export function Navbar({ title }) {
     <nav class="navbar">
       <img src="/logo.jpg" alt="Logo" class="navbar-logo" />
       <div class="navbar-title">${title || 'Life Skill Course'}</div>
-      <div style="display: flex; align-items: center; gap: 10px;">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <!-- Database Connection Indicator Dot -->
+        <button
+          type="button"
+          class="navbar-btn"
+          title="${dbStatus.connected ? 'Database Connected (Green) - Press/hold for details' : 'Database Offline / Fallback (Red) - Press/hold for problem details'}"
+          onMouseDown=${handlePressStart}
+          onMouseUp=${handlePressEnd}
+          onTouchStart=${handlePressStart}
+          onTouchEnd=${handlePressEnd}
+          onClick=${() => setShowDbModal(true)}
+          style="display: flex; align-items: center; gap: 5px; padding: 4px 7px; border-radius: 12px; background: rgba(0,0,0,0.25); border: none; cursor: pointer;"
+        >
+          <span
+            style="width: 9px; height: 9px; border-radius: 50%; background: ${dbStatus.connected ? '#10b981' : '#ef4444'}; display: inline-block; box-shadow: 0 0 6px ${dbStatus.connected ? '#10b981' : '#ef4444'};"
+          ></span>
+          <span style="font-size: 11px; font-weight: 700; color: #fff;">
+            ${dbStatus.connected ? 'DB' : 'DB'}
+          </span>
+        </button>
+
+        <!-- Sync Button -->
         <button class="navbar-btn" onClick=${() => syncAll()} title="Sync Status" style="font-size: 13px; display: flex; align-items: center; gap: 6px;">
           ${getSyncDot()}
           ${status.pendingCount > 0 ? html`<span style="font-size: 11px; font-weight: 700; background: rgba(0,0,0,0.3); padding: 1px 6px; border-radius: 10px;">${status.pendingCount}</span>` : ''}
         </button>
-        <a href="#/settings" style="text-decoration: none; color: white;">
+
+        <!-- Profile Link -->
+        <a href="#/profile" style="text-decoration: none; color: white;" title="My Profile">
           <div class="list-avatar" style="width: 32px; height: 32px; font-size: 13px; background: rgba(255,255,255,0.2); color: white;">
             ${user && user.profilePhoto ? html`<img src="${user.profilePhoto}" alt="Avatar" />` : (user ? user.fullName.charAt(0).toUpperCase() : 'U')}
           </div>
         </a>
       </div>
     </nav>
+
+    <!-- Database Diagnostic Modal -->
+    ${showDbModal
+      ? html`
+          <div class="modal-overlay" onClick=${() => setShowDbModal(false)}>
+            <div class="modal" onClick=${(e) => e.stopPropagation()} style="max-width: 420px; padding: 20px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
+                <h3 style="margin: 0; font-size: 17px; font-weight: 700; color: var(--text);">
+                  Database Connection Status
+                </h3>
+                <button
+                  onClick=${() => setShowDbModal(false)}
+                  style="border: none; background: none; font-size: 18px; cursor: pointer; color: var(--text-light);"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <!-- Connection Status Banner -->
+              <div
+                style="padding: 12px; border-radius: 8px; margin-bottom: 14px; display: flex; align-items: center; gap: 10px; background: ${dbStatus.connected ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)'}; border: 1px solid ${dbStatus.connected ? '#10b981' : '#ef4444'};"
+              >
+                <span
+                  style="width: 14px; height: 14px; border-radius: 50%; background: ${dbStatus.connected ? '#10b981' : '#ef4444'}; display: inline-block; box-shadow: 0 0 8px ${dbStatus.connected ? '#10b981' : '#ef4444'}; flex-shrink: 0;"
+                ></span>
+                <div>
+                  <div style="font-weight: 700; font-size: 14px; color: ${dbStatus.connected ? '#065f46' : '#991b1b'};">
+                    ${dbStatus.connected ? '🟢 Database Connected' : '🔴 Database Not Connected'}
+                  </div>
+                  <div style="font-size: 12px; color: var(--text-light); margin-top: 2px;">
+                    ${dbStatus.message || (dbStatus.connected ? 'Active MongoDB connection' : 'Local In-Memory Fallback')}
+                  </div>
+                </div>
+              </div>
+
+              <!-- Diagnostic Details Box -->
+              <div style="margin-bottom: 16px;">
+                <div style="font-size: 12px; font-weight: 700; text-transform: uppercase; color: var(--text-light); margin-bottom: 6px;">
+                  What Problem Happened:
+                </div>
+                <div
+                  style="font-size: 13px; line-height: 1.5; color: var(--text); background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px; word-break: break-word; font-family: monospace;"
+                >
+                  ${dbStatus.details || dbStatus.error || 'Operating in fallback mode. Central MongoDB host is unreachable or unconfigured.'}
+                </div>
+              </div>
+
+              <div style="font-size: 12px; line-height: 1.4; color: var(--text-light); margin-bottom: 16px;">
+                💡 <b>System Note:</b> The portal has built-in zero-downtime persistence. All distribution entries, collection records, and reports continue to operate seamlessly using the secure local dataset.
+              </div>
+
+              <!-- Action Buttons -->
+              <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                <button
+                  type="button"
+                  class="btn btn-secondary"
+                  onClick=${fetchDbStatus}
+                  disabled=${checkingDb}
+                  style="padding: 8px 14px; font-size: 13px;"
+                >
+                  ${checkingDb ? 'Testing...' : '🔄 Check Connection'}
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-primary"
+                  onClick=${() => setShowDbModal(false)}
+                  style="padding: 8px 16px; font-size: 13px;"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        `
+      : ''}
   `;
 }
 
@@ -130,7 +268,7 @@ export function BottomNav({ activeRoute }) {
     items = [
       { href: '#/', label: 'Dashboard', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6' },
       { href: '#/teams', label: 'Teams', icon: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z' },
-      { href: '#/stock', label: 'Stock', icon: 'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4' },
+      { href: '#/members', label: 'Members', icon: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z' },
       { href: '#/finance', label: 'Finance', icon: 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z' },
       { href: '#/reports', label: 'Reports', icon: 'M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' }
     ];
@@ -140,8 +278,7 @@ export function BottomNav({ activeRoute }) {
       { href: '#/teams', label: 'Teams', icon: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z' },
       { href: '#/transfers', label: 'Transfers', icon: 'M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4' },
       { href: '#/finance', label: 'Finance', icon: 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z' },
-      { href: '#/reports', label: 'Reports', icon: 'M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
-      { href: '#/settings', label: 'Profile', icon: 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z' }
+      { href: '#/reports', label: 'Reports', icon: 'M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' }
     ];
   } else if (role === 'team_leader') {
     items = [
@@ -149,7 +286,7 @@ export function BottomNav({ activeRoute }) {
       { href: '#/members', label: 'Members', icon: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z' },
       { href: '#/stock', label: 'Stock', icon: 'M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4' },
       { href: '#/transfers', label: 'Transfers', icon: 'M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4' },
-      { href: '#/reports', label: 'Reports', icon: 'M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' }
+      { href: '#/profile', label: 'Profile', icon: 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z' }
     ];
   } else {
     // team_member
@@ -158,7 +295,7 @@ export function BottomNav({ activeRoute }) {
       { href: '#/distribution', label: 'Distribute', icon: 'M12 4v16m8-8H4' },
       { href: '#/collections', label: 'Collect', icon: 'M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z' },
       { href: '#/transfers', label: 'Handover', icon: 'M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4' },
-      { href: '#/areas', label: 'Areas', icon: 'M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z' }
+      { href: '#/profile', label: 'Profile', icon: 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z' }
     ];
   }
 

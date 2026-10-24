@@ -8,7 +8,7 @@ import Area from '../models/Area.js';
 import CampaignConfig from '../models/CampaignConfig.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { isValidObjectId } from '../utils/validation.js';
-import { buildDailyReport, buildOverallReport } from '../utils/whatsappReports.js';
+import { buildDailyReport, buildOverallReport, buildCustomWhatsAppReport } from '../utils/whatsappReports.js';
 
 const router = express.Router();
 
@@ -83,15 +83,60 @@ router.get('/data', async (req, res) => {
 router.get('/whatsapp-summary', async (req, res) => {
   try {
     const {
-      reportFormat = 'daily', // 'daily' | 'overall'
-      date,                   // YYYY-MM-DD
+      reportType,
+      reportFormat = 'daily',
+      date,
       dateFrom,
       dateTo,
-      breakdown = 'team',     // 'team' | 'area' | 'member'
+      breakdown = 'team',
       teamId,
+      memberId,
       areaId,
-      offlineCount = 0
+      offlineCount = 0,
+      sections: rawSections,
+      customFooterNote
     } = req.query;
+
+    const activeReportType = reportType || reportFormat || 'daily';
+
+    // Parse section checkboxes with smart defaults
+    let parsedSections = {
+      includeHeader: true,
+      includeSummary: true,
+      includeLeaderboard: true,
+      includeBreakdown: true,
+      includeTopPerformers: true,
+      includeHandoverStatus: true,
+      includeProgressBar: true,
+      includeZeroActivity: false,
+      includeOfflineNotice: true,
+      includeFooter: true
+    };
+
+    if (typeof rawSections === 'string') {
+      try {
+        parsedSections = { ...parsedSections, ...JSON.parse(rawSections) };
+      } catch {}
+    } else if (rawSections && typeof rawSections === 'object') {
+      parsedSections = { ...parsedSections, ...rawSections };
+    }
+
+    [
+      'includeHeader',
+      'includeSummary',
+      'includeLeaderboard',
+      'includeBreakdown',
+      'includeTopPerformers',
+      'includeHandoverStatus',
+      'includeProgressBar',
+      'includeZeroActivity',
+      'includeOfflineNotice',
+      'includeFooter'
+    ].forEach((k) => {
+      if (req.query[k] !== undefined) {
+        parsedSections[k] = req.query[k] === 'true' || req.query[k] === true;
+      }
+    });
 
     const user = req.user;
     const isSuperOrUsthad = ['super_admin', 'usthad'].includes(user.role);
@@ -103,7 +148,7 @@ router.get('/whatsapp-summary', async (req, res) => {
     let targetDateEnd = null;
     let displayDateStr = '';
 
-    if (reportFormat === 'daily') {
+    if (activeReportType === 'daily') {
       const d = date ? new Date(date) : new Date();
       targetDateStart = new Date(d);
       targetDateStart.setHours(0, 0, 0, 0);
@@ -111,7 +156,6 @@ router.get('/whatsapp-summary', async (req, res) => {
       targetDateEnd.setHours(23, 59, 59, 999);
       displayDateStr = d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
     } else {
-      // Overall progress report
       if (dateFrom) {
         targetDateStart = new Date(dateFrom);
         targetDateStart.setHours(0, 0, 0, 0);
@@ -146,41 +190,50 @@ router.get('/whatsapp-summary', async (req, res) => {
       if (req.query.memberId && isValidObjectId(req.query.memberId)) scopedMemberId = req.query.memberId;
     }
 
-    // Build Match Queries
-    const distMatch = { status: 'active' };
-    const colMatch = { status: 'active' };
+    // Build Match Queries — Exclude unapproved (pending, rejected) entries from official totals & rankings
+    const distMatch = {
+      $and: [
+        { status: { $in: ['approved', 'active'] } },
+        { approvalStatus: { $nin: ['pending', 'rejected'] } }
+      ]
+    };
+    const colMatch = {
+      $and: [
+        { status: { $in: ['approved', 'active'] } },
+        { approvalStatus: { $nin: ['pending', 'rejected'] } }
+      ]
+    };
     const transMatch = { status: 'confirmed' };
 
     if (scopedTeamId) {
-      distMatch.teamId = new (await import('mongoose')).default.Types.ObjectId(scopedTeamId);
-      colMatch.teamId = distMatch.teamId;
-      transMatch.teamId = distMatch.teamId;
+      const mongooseModule = (await import('mongoose')).default;
+      const teamObjId = new mongooseModule.Types.ObjectId(scopedTeamId);
+      distMatch.$and.push({ teamId: teamObjId });
+      colMatch.$and.push({ teamId: teamObjId });
+      transMatch.teamId = teamObjId;
     }
     if (scopedMemberId) {
-      distMatch.memberId = new (await import('mongoose')).default.Types.ObjectId(scopedMemberId);
-      colMatch.memberId = distMatch.memberId;
-      transMatch.fromUserId = distMatch.memberId;
+      const mongooseModule = (await import('mongoose')).default;
+      const memberObjId = new mongooseModule.Types.ObjectId(scopedMemberId);
+      distMatch.$and.push({ memberId: memberObjId });
+      colMatch.$and.push({ memberId: memberObjId });
+      transMatch.fromUserId = memberObjId;
     }
     if (areaId && isValidObjectId(areaId)) {
-      distMatch.areaId = new (await import('mongoose')).default.Types.ObjectId(areaId);
-      colMatch.areaId = distMatch.areaId;
+      const mongooseModule = (await import('mongoose')).default;
+      const areaObjId = new mongooseModule.Types.ObjectId(areaId);
+      distMatch.$and.push({ areaId: areaObjId });
+      colMatch.$and.push({ areaId: areaObjId });
     }
 
     // Date filters
     if (targetDateStart || targetDateEnd) {
-      distMatch.date = {};
-      colMatch.date = {};
-      transMatch.transferDate = {};
-      if (targetDateStart) {
-        distMatch.date.$gte = targetDateStart;
-        colMatch.date.$gte = targetDateStart;
-        transMatch.transferDate.$gte = targetDateStart;
-      }
-      if (targetDateEnd) {
-        distMatch.date.$lte = targetDateEnd;
-        colMatch.date.$lte = targetDateEnd;
-        transMatch.transferDate.$lte = targetDateEnd;
-      }
+      const dateFilter = {};
+      if (targetDateStart) dateFilter.$gte = targetDateStart;
+      if (targetDateEnd) dateFilter.$lte = targetDateEnd;
+      distMatch.$and.push({ date: dateFilter });
+      colMatch.$and.push({ date: dateFilter });
+      transMatch.transferDate = dateFilter;
     }
 
     // Fetch config, teams, areas, and users for reference
@@ -217,154 +270,79 @@ router.get('/whatsapp-summary', async (req, res) => {
       scopeTitle = `Area: ${a ? a.name : 'Selected Area'}`;
     }
 
-    // Build Breakdown Items (by team, area, or member)
-    let items = [];
+    // Build structured teamsData for team-wise performance and rankings
+    const relevantTeams = scopedTeamId
+      ? allTeams.filter(t => t._id.toString() === scopedTeamId.toString())
+      : allTeams;
 
-    if (breakdown === 'area') {
-      const [distAreaAgg, colAreaAgg] = await Promise.all([
-        Distribution.aggregate([
-          { $match: distMatch },
-          { $group: { _id: '$areaId', distributed: { $sum: '$quantity' } } }
-        ]),
-        Collection.aggregate([
-          { $match: colMatch },
-          { $group: { _id: '$areaId', collected: { $sum: '$amount' } } }
-        ])
-      ]);
+    const teamIds = relevantTeams.map(t => t._id);
+    const usersInTeams = await User.find({ teamId: { $in: teamIds } }).select('fullName phone teamId');
 
-      const colMap = new Map(colAreaAgg.map(x => [x._id ? x._id.toString() : '', x.collected]));
-      items = distAreaAgg.map(item => {
-        const areaObj = allAreas.find(a => a._id.toString() === (item._id ? item._id.toString() : ''));
+    const [memberDistAgg, memberColAgg] = await Promise.all([
+      Distribution.aggregate([
+        { $match: distMatch },
+        { $group: { _id: '$memberId', distributed: { $sum: '$quantity' } } }
+      ]),
+      Collection.aggregate([
+        { $match: colMatch },
+        { $group: { _id: '$memberId', collected: { $sum: '$amount' } } }
+      ])
+    ]);
+
+    const memberDistMap = new Map(memberDistAgg.map(x => [x._id ? x._id.toString() : '', x.distributed]));
+    const memberColMap = new Map(memberColAgg.map(x => [x._id ? x._id.toString() : '', x.collected]));
+
+    const teamsData = relevantTeams.map(t => {
+      const tIdStr = t._id.toString();
+      const membersForTeam = usersInTeams.filter(u => u.teamId && u.teamId.toString() === tIdStr);
+
+      const members = membersForTeam.map(u => {
+        const uIdStr = u._id.toString();
         return {
-          id: item._id,
-          name: areaObj ? `${areaObj.name} (${areaObj.district})` : 'Unassigned Area',
-          distributed: item.distributed,
-          collected: colMap.get(item._id ? item._id.toString() : '') || 0,
-          transferred: 0
+          id: u._id,
+          name: u.fullName,
+          distributed: memberDistMap.get(uIdStr) || 0,
+          collected: memberColMap.get(uIdStr) || 0
         };
       });
-    } else if (breakdown === 'member' || isTeamLeader || isTeamMember) {
-      // Member breakdown
-      const memberQuery = {};
-      if (scopedTeamId) memberQuery.teamId = scopedTeamId;
-      if (scopedMemberId) memberQuery._id = scopedMemberId;
 
-      const teamMembers = await User.find(memberQuery).select('fullName phone');
+      const teamDist = members.reduce((sum, m) => sum + m.distributed, 0);
+      const teamCol = members.reduce((sum, m) => sum + m.collected, 0);
 
-      const [distMemberAgg, colMemberAgg, transMemberAgg] = await Promise.all([
-        Distribution.aggregate([
-          { $match: distMatch },
-          { $group: { _id: '$memberId', distributed: { $sum: '$quantity' } } }
-        ]),
-        Collection.aggregate([
-          { $match: colMatch },
-          { $group: { _id: '$memberId', collected: { $sum: '$amount' } } }
-        ]),
-        MoneyTransfer.aggregate([
-          { $match: transMatch },
-          { $group: { _id: '$fromUserId', transferred: { $sum: '$amount' } } }
-        ])
-      ]);
-
-      const colMap = new Map(colMemberAgg.map(x => [x._id ? x._id.toString() : '', x.collected]));
-      const transMap = new Map(transMemberAgg.map(x => [x._id ? x._id.toString() : '', x.transferred]));
-
-      items = distMemberAgg.map(item => {
-        const m = teamMembers.find(u => u._id.toString() === (item._id ? item._id.toString() : ''));
-        return {
-          id: item._id,
-          name: m ? m.fullName : 'Team Member',
-          distributed: item.distributed,
-          collected: colMap.get(item._id ? item._id.toString() : '') || 0,
-          transferred: transMap.get(item._id ? item._id.toString() : '') || 0
-        };
-      });
-    } else {
-      // Team breakdown (default)
-      const [distTeamAgg, colTeamAgg, transTeamAgg] = await Promise.all([
-        Distribution.aggregate([
-          { $match: distMatch },
-          { $group: { _id: '$teamId', distributed: { $sum: '$quantity' } } }
-        ]),
-        Collection.aggregate([
-          { $match: colMatch },
-          { $group: { _id: '$teamId', collected: { $sum: '$amount' } } }
-        ]),
-        MoneyTransfer.aggregate([
-          { $match: transMatch },
-          { $group: { _id: '$teamId', transferred: { $sum: '$amount' } } }
-        ])
-      ]);
-
-      const colMap = new Map(colTeamAgg.map(x => [x._id ? x._id.toString() : '', x.collected]));
-      const transMap = new Map(transTeamAgg.map(x => [x._id ? x._id.toString() : '', x.transferred]));
-
-      items = distTeamAgg.map(item => {
-        const t = allTeams.find(x => x._id.toString() === (item._id ? item._id.toString() : ''));
-        return {
-          id: item._id,
-          name: t ? t.name : 'Independent Group',
-          distributed: item.distributed,
-          collected: colMap.get(item._id ? item._id.toString() : '') || 0,
-          transferred: transMap.get(item._id ? item._id.toString() : '') || 0
-        };
-      });
-    }
-
-    // Sort items by distributed descending
-    items.sort((a, b) => b.distributed - a.distributed);
-
-    // Compute accurate ranks handling ties
-    let currentRank = 1;
-    const rankedItems = items.map((item, idx, arr) => {
-      if (idx > 0 && item.distributed < arr[idx - 1].distributed) {
-        currentRank = idx + 1;
-      }
-      return { ...item, rank: currentRank };
+      return {
+        id: t._id,
+        name: t.name,
+        distributed: teamDist,
+        collected: teamCol,
+        members
+      };
     });
 
-    let generatedText = '';
-
-    if (reportFormat === 'overall') {
-      generatedText = buildOverallReport({
-        timestampStr: displayDateStr,
-        scopeTitle,
-        role: user.role,
-        campaignConfig: { totalStock: config.totalStock, calendarPrice: config.calendarPrice },
-        rankedItems,
-        totals: {
-          distributed: totalDistributed,
-          collected: totalCollected,
-          transferred: totalTransferred,
-          teamsCount: allTeams.length,
-          membersCount: membersCount || items.length,
-          areasCount
-        },
-        offlinePendingCount: parseInt(offlineCount, 10) || 0
-      });
-    } else {
-      // Daily Report
-      generatedText = buildDailyReport({
-        dateStr: displayDateStr,
-        scopeTitle,
-        role: user.role,
-        items: rankedItems,
-        totals: {
-          distributed: totalDistributed,
-          collected: totalCollected,
-          transferred: totalTransferred,
-          areasCount,
-          membersCount: membersCount || items.length
-        },
-        offlinePendingCount: parseInt(offlineCount, 10) || 0
-      });
-    }
+    const generatedText = buildCustomWhatsAppReport({
+      reportType: activeReportType,
+      dateStr: displayDateStr,
+      scopeTitle,
+      role: user.role,
+      campaignConfig: { totalStock: config.totalStock, calendarPrice: config.calendarPrice },
+      teamsData,
+      totals: {
+        distributed: totalDistributed,
+        collected: totalCollected,
+        transferred: totalTransferred,
+        teamsCount: allTeams.length,
+        membersCount: membersCount || usersInTeams.length,
+        areasCount
+      },
+      offlinePendingCount: parseInt(offlineCount, 10) || 0,
+      sections: parsedSections,
+      customFooterNote: customFooterNote || ''
+    });
 
     return res.json({
       success: true,
       text: generatedText,
       metadata: {
-        format: reportFormat,
+        reportType: activeReportType,
         displayDate: displayDateStr,
         scopeTitle,
         totals: {
@@ -374,6 +352,7 @@ router.get('/whatsapp-summary', async (req, res) => {
           areasCount,
           membersCount
         },
+        sections: parsedSections,
         itemCount: items.length
       }
     });

@@ -1,26 +1,38 @@
-import { login } from '../store/auth.js';
+import api from '../services/api.js';
+import { login, currentUser } from '../store/auth.js';
 
 const html = window.html;
-const { useState, useEffect, useRef, useCallback } = window.hooks;
+const { useState, useEffect, useCallback } = window.hooks;
 
 export default function Login() {
-  // Mode: 'pin' (default matching Federal Bank reference screenshot) vs 'username'
+  // Primary mode is 'pin' (4-column bank-style PIN login).
+  // Users can also switch to 'username' (Username + Password) or 'phone' (Phone + PIN).
   const [mode, setMode] = useState('pin');
 
-  // 4-column PIN string or array
+  // First Login Password Change state
+  const [firstLoginRequired, setFirstLoginRequired] = useState(false);
+  const [newPasswordVal, setNewPasswordVal] = useState('');
+  const [confirmPasswordVal, setConfirmPasswordVal] = useState('');
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [changePassError, setChangePassError] = useState('');
+
+  // 4-column PIN state
   const [pinDigits, setPinDigits] = useState(['', '', '', '']);
   const [isShaking, setIsShaking] = useState(false);
   const [activeKey, setActiveKey] = useState(null);
 
-  // Username & Password fallback fields
+  // Username & Password state
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
 
+  // Optional Phone + PIN state
+  const [phone, setPhone] = useState('');
+  const [phonePin, setPhonePin] = useState('');
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // Auto-focus / reset
   useEffect(() => {
     setError('');
   }, [mode]);
@@ -28,62 +40,64 @@ export default function Login() {
   // Execute login with 4-digit PIN
   const executePinLogin = useCallback(async (pinCode) => {
     if (loading) return;
-    if (pinCode.length !== 4) {
-      setError('Please enter a 4-digit PIN.');
+    if (!pinCode || pinCode.length !== 4) {
+      setError('Please enter your 4-digit PIN.');
       return;
     }
     setLoading(true);
     setError('');
 
     try {
-      await login({ pin: pinCode });
-      if (window.showToast) window.showToast('Welcome to Life Skills Course! ✓', 'success');
+      const loginRes = await login({ pin: pinCode });
+      if (loginRes && (loginRes.mustChangePassword || (loginRes.user && loginRes.user.mustChangePassword))) {
+        setFirstLoginRequired(true);
+        return;
+      }
+      if (window.showToast) window.showToast('Welcome back to Life Skill Course', 'success');
       window.location.hash = '#/';
     } catch (err) {
-      setError(err.message || 'Invalid 4-digit PIN. Try 1111 for Admin.');
+      setError(err.message || 'Invalid 4-digit PIN. Try 1111 for Super Admin.');
       setIsShaking(true);
       if (navigator.vibrate) navigator.vibrate([40, 60, 40]);
       setTimeout(() => {
         setIsShaking(false);
         setPinDigits(['', '', '', '']);
-      }, 500);
+      }, 480);
     } finally {
       setLoading(false);
     }
   }, [loading]);
 
-  // Handle digit entered via keypad or physical keyboard
+  // Handle digit entered via on-screen keypad or physical keyboard
   const handleInputDigit = useCallback((digitChar) => {
     if (loading || mode !== 'pin') return;
-    if (navigator.vibrate) navigator.vibrate(15);
+    if (navigator.vibrate) navigator.vibrate(12);
 
-    // Provide visual press feedback
     setActiveKey(digitChar);
-    setTimeout(() => setActiveKey(null), 140);
+    setTimeout(() => setActiveKey(null), 130);
 
     setPinDigits((prev) => {
       const firstEmptyIdx = prev.findIndex((d) => !d);
-      if (firstEmptyIdx === -1) return prev; // already full
+      if (firstEmptyIdx === -1) return prev;
 
       const next = [...prev];
       next[firstEmptyIdx] = digitChar;
       setError('');
 
-      // If this was the 4th digit (index 3), trigger auto-login
       if (firstEmptyIdx === 3) {
         const fullPin = next.join('');
-        setTimeout(() => executePinLogin(fullPin), 80);
+        setTimeout(() => executePinLogin(fullPin), 90);
       }
       return next;
     });
   }, [loading, mode, executePinLogin]);
 
-  // Handle backspace / delete
+  // Handle backspace
   const handleBackspace = useCallback(() => {
     if (loading || mode !== 'pin') return;
     if (navigator.vibrate) navigator.vibrate(10);
     setActiveKey('backspace');
-    setTimeout(() => setActiveKey(null), 140);
+    setTimeout(() => setActiveKey(null), 130);
 
     setPinDigits((prev) => {
       const next = [...prev];
@@ -103,17 +117,16 @@ export default function Login() {
     if (loading || mode !== 'pin') return;
     if (navigator.vibrate) navigator.vibrate(10);
     setActiveKey('clear');
-    setTimeout(() => setActiveKey(null), 140);
+    setTimeout(() => setActiveKey(null), 130);
     setPinDigits(['', '', '', '']);
     setError('');
   }, [loading, mode]);
 
-  // Physical keyboard listener
+  // Physical keyboard support
   useEffect(() => {
     if (mode !== 'pin') return;
 
     const onKeyDown = (e) => {
-      // Avoid intercepting if an input element has focus
       if (['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
 
       if (e.key >= '0' && e.key <= '9') {
@@ -138,15 +151,16 @@ export default function Login() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [mode, handleInputDigit, handleBackspace, handleClear, executePinLogin, pinDigits]);
 
-  // Quick Sandbox 1-Click Login
+  // 1-Tap Sandbox direct entry
   const handleSandboxEnter = (pinCode) => {
     if (loading) return;
+    setMode('pin');
     const digits = pinCode.split('').slice(0, 4);
     setPinDigits(digits);
     executePinLogin(pinCode);
   };
 
-  // Standard Username/Password submission
+  // Username & Password login submission
   const handleUsernameSubmit = async (e) => {
     e.preventDefault();
     if (!username.trim() || !password) {
@@ -156,8 +170,12 @@ export default function Login() {
     setLoading(true);
     setError('');
     try {
-      await login({ username: username.trim(), password });
-      if (window.showToast) window.showToast('Signed in successfully! ✓', 'success');
+      const loginRes = await login({ username: username.trim(), password });
+      if (loginRes && (loginRes.mustChangePassword || (loginRes.user && loginRes.user.mustChangePassword))) {
+        setFirstLoginRequired(true);
+        return;
+      }
+      if (window.showToast) window.showToast('Signed in successfully', 'success');
       window.location.hash = '#/';
     } catch (err) {
       setError(err.message || 'Invalid username or password.');
@@ -166,11 +184,66 @@ export default function Login() {
     }
   };
 
+  // Phone + PIN login submission
+  const handlePhonePinSubmit = async (e) => {
+    e.preventDefault();
+    if (!phone.trim() || !phonePin.trim()) {
+      setError('Please enter your registered phone number and PIN.');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      const loginRes = await login({ phone: phone.trim(), pin: phonePin.trim() });
+      if (loginRes && (loginRes.mustChangePassword || (loginRes.user && loginRes.user.mustChangePassword))) {
+        setFirstLoginRequired(true);
+        return;
+      }
+      if (window.showToast) window.showToast('Signed in successfully', 'success');
+      window.location.hash = '#/';
+    } catch (err) {
+      setError(err.message || 'Invalid phone number or PIN.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // First Login — Set New Password submission
+  const handleFirstLoginSubmit = async (e) => {
+    e.preventDefault();
+    if (!newPasswordVal || newPasswordVal.length < 6) {
+      setChangePassError('Password must be at least 6 characters long.');
+      return;
+    }
+    if (newPasswordVal !== confirmPasswordVal) {
+      setChangePassError('Passwords do not match. Please re-enter.');
+      return;
+    }
+    setChangingPassword(true);
+    setChangePassError('');
+    try {
+      const res = await api.post('/api/auth/first-login-change-password', {
+        newPassword: newPasswordVal
+      });
+      if (res && res.success) {
+        if (currentUser.value) {
+          currentUser.value.mustChangePassword = false;
+        }
+        if (window.showToast) window.showToast('Password updated successfully! Welcome to Life Skill Course.', 'success');
+        setFirstLoginRequired(false);
+        window.location.hash = '#/';
+      }
+    } catch (err) {
+      setChangePassError(err.message || 'Failed to update password.');
+    } finally {
+      setChangingPassword(false);
+    }
+  };
+
   const currentPinString = pinDigits.join('');
   const firstEmptyIndex = pinDigits.findIndex((d) => !d);
   const activeColumnIndex = firstEmptyIndex === -1 ? 3 : firstEmptyIndex;
 
-  // Keypad definitions: 3 columns x 4 rows
   const keypadRows = [
     [
       { digit: '1', letters: '' },
@@ -188,268 +261,460 @@ export default function Login() {
       { digit: '9', letters: 'WXYZ' }
     ],
     [
-      { type: 'clear', label: 'C', sub: 'CLEAR' },
-      { digit: '0', letters: '+' },
-      { type: 'backspace', label: '⌫', sub: 'DELETE' }
+      { type: 'clear', label: 'CLR' },
+      { digit: '0', letters: '' },
+      { type: 'backspace', label: 'DEL' }
     ]
   ];
 
   return html`
     <div style="
       min-height: 100vh;
-      background: radial-gradient(circle at 50% 10%, #0d1e24 0%, #081216 65%, #050b0e 100%);
-      color: #E2E8F0;
+      background: radial-gradient(circle at 50% -10%, #e0f2fe 0%, #f0f9ff 38%, #f8fafc 100%);
+      color: #0f172a;
       display: flex;
       flex-direction: column;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-      padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom);
+      padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
       box-sizing: border-box;
       user-select: none;
       -webkit-user-select: none;
     ">
-      
-      <!-- Keyframe Animations -->
       <style>
-        @keyframes bank-shake {
+        @keyframes pin-shake {
           0%, 100% { transform: translateX(0); }
-          15%, 55% { transform: translateX(-8px); }
-          35%, 75% { transform: translateX(8px); }
+          20%, 60% { transform: translateX(-8px); }
+          40%, 80% { transform: translateX(8px); }
         }
-        @keyframes dot-pop {
+        @keyframes pin-dot-pop {
           0% { transform: scale(0.3); opacity: 0; }
-          60% { transform: scale(1.2); opacity: 1; }
+          65% { transform: scale(1.18); opacity: 1; }
           100% { transform: scale(1); opacity: 1; }
         }
-        @keyframes cursor-pulse {
+        @keyframes pin-cursor-blink {
           0%, 100% { opacity: 0.2; }
-          50% { opacity: 0.9; }
+          50% { opacity: 1; }
         }
-        .bank-btn-touch {
-          transition: transform 0.08s ease, background 0.12s ease;
+        .lsc-touch-btn {
+          transition: transform 0.08s ease, background-color 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
           -webkit-tap-highlight-color: transparent;
         }
-        .bank-btn-touch:active {
-          transform: scale(0.93);
-          background: rgba(42, 107, 99, 0.4) !important;
+        .lsc-touch-btn:active {
+          transform: scale(0.96);
+        }
+        .lsc-input-light {
+          width: 100%;
+          padding: 13px 14px;
+          background: #ffffff;
+          border: 1.5px solid #cbd5e1;
+          border-radius: 12px;
+          color: #0f172a;
+          font-size: 15px;
+          outline: none;
+          box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+          transition: border-color 0.15s ease, box-shadow 0.15s ease;
+        }
+        .lsc-input-light:focus {
+          border-color: #0284c7;
+          box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.18);
+        }
+        .lsc-input-light::placeholder {
+          color: #94a3b8;
         }
       </style>
 
-      <!-- Top Header matching Federal Bank reference screenshot -->
+      <!-- Top App Bar (Clean Light Navigation matching brand and reference) -->
       <header style="
         display: flex;
         align-items: center;
         justify-content: space-between;
         height: 56px;
-        padding: 0 4px;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        padding: 0 16px;
+        background: rgba(255, 255, 255, 0.92);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border-bottom: 1px solid #e2e8f0;
       ">
         <button
           type="button"
+          class="lsc-touch-btn"
           onClick=${() => {
             setPinDigits(['', '', '', '']);
             setError('');
+            if (mode !== 'pin') setMode('pin');
           }}
           style="
             background: transparent;
             border: none;
-            color: #94A3B8;
-            font-size: 22px;
-            cursor: pointer;
-            padding: 8px;
-            border-radius: 8px;
+            color: #475569;
+            width: 38px;
+            height: 38px;
+            border-radius: 10px;
             display: flex;
             align-items: center;
             justify-content: center;
+            cursor: pointer;
           "
-          title="Clear PIN"
+          title="Reset"
         >
-          ✕
+          <svg style="width: 20px; height: 20px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
         </button>
 
-        <div style="font-size: 15px; font-weight: 600; color: #F1F5F9; letter-spacing: 0.3px;">
+        <div style="font-size: 16px; font-weight: 700; color: #0f172a; letter-spacing: -0.2px;">
           Life Skills · PIN Login
         </div>
 
-        <div style="display: flex; gap: 6px; color: #94A3B8;">
+        <div style="display: flex; align-items: center; gap: 4px;">
           <button
             type="button"
-            onClick=${() => window.showToast ? window.showToast('Fast PIN Access: Enter 1111 for Admin, 2222 for Usthad', 'info') : null}
-            style="background: transparent; border: none; color: #94A3B8; font-size: 18px; padding: 6px; cursor: pointer;"
-            title="Help & Info"
+            class="lsc-touch-btn"
+            onClick=${() => {
+              if (window.showToast) {
+                window.showToast('Quick PINs: 1111 (Admin) · 2222 (Usthad) · 3333 (Leader) · 4444 (Member)', 'info', 4000);
+              }
+            }}
+            style="
+              background: transparent;
+              border: none;
+              color: #475569;
+              width: 38px;
+              height: 38px;
+              border-radius: 10px;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              cursor: pointer;
+            "
+            title="PIN Help"
           >
-            <svg style="width: 19px; height: 19px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+            <svg style="width: 20px; height: 20px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
             </svg>
           </button>
           <button
             type="button"
+            class="lsc-touch-btn"
             onClick=${() => {
               if (navigator.share) {
                 navigator.share({ title: 'Life Skill Course', url: window.location.href }).catch(() => {});
               }
             }}
-            style="background: transparent; border: none; color: #94A3B8; font-size: 18px; padding: 6px; cursor: pointer;"
-            title="Share"
+            style="
+              background: transparent;
+              border: none;
+              color: #475569;
+              width: 38px;
+              height: 38px;
+              border-radius: 10px;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              cursor: pointer;
+            "
+            title="Share Portal"
           >
             <svg style="width: 19px; height: 19px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
             </svg>
           </button>
         </div>
       </header>
 
-      <!-- Main Central Container -->
+      <!-- Main Body -->
       <div style="
         flex: 1;
         display: flex;
         flex-direction: column;
         justify-content: space-between;
-        max-width: 360px;
+        max-width: 390px;
         width: 100%;
         margin: 0 auto;
-        padding: 18px 0 12px;
+        padding: 16px 20px 14px;
       ">
-        
         <div>
-          <!-- Title & Subtitle matching reference screenshot -->
-          <div style="margin-bottom: 24px;">
+          <!-- Organization Identity Card (Marketing Logo colors: Vibrant Sky / Cerulean Blue & Pure White) -->
+          <div style="
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            background: #ffffff;
+            border: 1.5px solid #e0f2fe;
+            box-shadow: 0 4px 14px rgba(2, 132, 199, 0.08);
+            border-radius: 14px;
+            padding: 7px 14px 7px 7px;
+            margin-bottom: 18px;
+          ">
+            <img
+              src="/logo.jpg"
+              alt="Markazul Hidayathil Islamiyya"
+              style="
+                width: 36px;
+                height: 36px;
+                border-radius: 10px;
+                object-fit: contain;
+                background: #ffffff;
+                padding: 2px;
+                border: 1px solid #bae6fd;
+              "
+            />
+            <div style="line-height: 1.25;">
+              <div style="font-size: 13px; font-weight: 700; color: #0f172a; letter-spacing: -0.1px;">
+                Markazul Hidayathil Islamiyya
+              </div>
+              <div style="font-size: 11px; font-weight: 600; color: #0284c7;">
+                Annual Calendar Camp Portal
+              </div>
+            </div>
+          </div>
+
+          <!-- Editorial Greeting ("Welcome back" vs "First-Time Setup") -->
+          <div style="margin-bottom: 20px;">
             <h1 style="
+              font-family: Georgia, 'Times New Roman', Times, serif;
               font-size: 32px;
               font-weight: 700;
-              color: #FFFFFF;
-              margin: 0 0 8px;
+              color: #0f172a;
+              margin: 0 0 6px;
               letter-spacing: -0.5px;
-              font-family: Georgia, 'Times New Roman', serif, -apple-system;
             ">
-              Welcome back
+              ${firstLoginRequired ? 'First-Time Setup' : 'Welcome back'}
             </h1>
-            <p style="font-size: 14px; color: #8BA2AD; margin: 0; line-height: 1.45;">
-              ${mode === 'pin'
+            <p style="
+              font-size: 14.5px;
+              color: #475569;
+              margin: 0;
+              line-height: 1.45;
+              font-weight: 500;
+            ">
+              ${firstLoginRequired
+                ? 'Your account was created or reset with temporary credentials. Please set your secure personal password to continue.'
+                : mode === 'pin'
                 ? 'Enter your 4-digit PIN to continue to your life skills lessons.'
-                : 'Sign in with your administrator or leader credentials.'}
+                : mode === 'username'
+                ? 'Sign in with your administrator or team leader username.'
+                : 'Sign in with your registered phone number and PIN.'}
             </p>
           </div>
 
-          <!-- Error Message Banner -->
+          <!-- Error Banner -->
           ${error ? html`
             <div style="
-              background: rgba(220, 38, 38, 0.16);
-              border: 1px solid rgba(220, 38, 38, 0.45);
-              color: #FCA5A5;
-              padding: 9px 12px;
-              border-radius: 10px;
+              background: #fef2f2;
+              border: 1.5px solid #fecdd3;
+              color: #b91c1c;
+              padding: 10px 14px;
+              border-radius: 12px;
               font-size: 13px;
               margin-bottom: 16px;
               text-align: center;
-              line-height: 1.4;
+              font-weight: 600;
+              box-shadow: 0 1px 3px rgba(220, 38, 38, 0.08);
             ">
               ${error}
             </div>
           ` : ''}
 
-          ${mode === 'pin' ? html`
-            <!-- 4 COLUMNS PIN DISPLAY (Federal Bank 4 Columns) -->
-            <div
-              style="
+          ${firstLoginRequired ? html`
+            <!-- First Login Password Change Card -->
+            <div style="
+              background: #ffffff;
+              border: 1.5px solid #0284c7;
+              border-radius: 16px;
+              padding: 20px;
+              box-shadow: 0 8px 24px rgba(2, 132, 199, 0.12);
+              margin-bottom: 18px;
+            ">
+              <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
+                <div style="width: 38px; height: 38px; border-radius: 10px; background: #e0f2fe; color: #0284c7; display: flex; align-items: center; justify-content: center; font-size: 18px;">
+                  🔒
+                </div>
+                <div>
+                  <div style="font-size: 16px; font-weight: 700; color: #0f172a;">Set Permanent Password</div>
+                  <div style="font-size: 12px; color: #64748b;">Must be at least 6 characters</div>
+                </div>
+              </div>
+
+              ${changePassError ? html`
+                <div style="background: #fef2f2; border: 1.5px solid #fecdd3; color: #b91c1c; padding: 10px 14px; border-radius: 12px; font-size: 13px; margin-bottom: 14px; font-weight: 600;">
+                  ${changePassError}
+                </div>
+              ` : ''}
+
+              <form onSubmit=${handleFirstLoginSubmit}>
+                <div style="margin-bottom: 14px;">
+                  <label style="display: block; font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 6px;">
+                    New Password
+                  </label>
+                  <input
+                    type="password"
+                    class="lsc-input-light"
+                    placeholder="Enter new secure password"
+                    value=${newPasswordVal}
+                    onInput=${(e) => setNewPasswordVal(e.target.value)}
+                    required
+                    minLength="6"
+                    disabled=${changingPassword}
+                  />
+                </div>
+                <div style="margin-bottom: 18px;">
+                  <label style="display: block; font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 6px;">
+                    Confirm New Password
+                  </label>
+                  <input
+                    type="password"
+                    class="lsc-input-light"
+                    placeholder="Confirm new password"
+                    value=${confirmPasswordVal}
+                    onInput=${(e) => setConfirmPasswordVal(e.target.value)}
+                    required
+                    minLength="6"
+                    disabled=${changingPassword}
+                  />
+                </div>
+                <button
+                  type="submit"
+                  class="lsc-touch-btn"
+                  disabled=${changingPassword}
+                  style="
+                    width: 100%;
+                    height: 50px;
+                    background: linear-gradient(135deg, #0284c7 0%, #1d4ed8 100%);
+                    color: #ffffff;
+                    font-size: 15px;
+                    font-weight: 700;
+                    border: none;
+                    border-radius: 12px;
+                    cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    box-shadow: 0 4px 14px rgba(2, 132, 199, 0.35);
+                  "
+                >
+                  ${changingPassword ? 'Saving Password...' : 'Save Password & Enter Dashboard →'}
+                </button>
+              </form>
+            </div>
+          ` : html`
+            <div>
+              ${mode === 'pin' ? html`
+                <!-- 4-Column Bank-Style PIN Boxes (Bright Light Mode with Cerulean Glow) -->
+                <div
+                  style="
                 display: grid;
                 grid-template-columns: repeat(4, 1fr);
                 gap: 12px;
-                margin-bottom: 20px;
-                animation: ${isShaking ? 'bank-shake 0.45s ease-in-out' : 'none'};
+                margin-bottom: 16px;
+                animation: ${isShaking ? 'pin-shake 0.45s ease-in-out' : 'none'};
               "
             >
               ${[0, 1, 2, 3].map((index) => {
-                const isFilled = Boolean(pinDigits[index]);
+                const digit = pinDigits[index];
+                const isFilled = Boolean(digit);
                 const isActive = index === activeColumnIndex && !isFilled;
-                
+
                 return html`
                   <div
                     key=${index}
-                    style="
-                      height: 72px;
-                      background: ${isFilled ? '#14252D' : '#0F1D23'};
-                      border: 1.5px solid ${isShaking ? '#EF4444' : (isFilled ? '#2A6B63' : (isActive ? '#3B82F6' : '#1E3640'))};
-                      border-radius: 14px;
-                      display: flex;
-                      align-items: center;
-                      justify-content: center;
-                      position: relative;
-                      box-shadow: ${isFilled ? '0 0 14px rgba(42, 107, 99, 0.35)' : 'none'};
-                      transition: all 0.15s ease;
-                      cursor: pointer;
-                    "
                     onClick=${() => {
-                      // Click on box clears subsequent digits
                       setPinDigits((prev) => {
                         const copy = [...prev];
                         for (let i = index; i < 4; i++) copy[i] = '';
                         return copy;
                       });
                     }}
+                    style="
+                      height: 68px;
+                      background: ${isFilled ? '#f0f9ff' : '#ffffff'};
+                      border: 2px solid ${
+                        isShaking
+                          ? '#ef4444'
+                          : isFilled
+                          ? '#0284c7'
+                          : isActive
+                          ? '#0ea5e9'
+                          : '#cbd5e1'
+                      };
+                      border-radius: 14px;
+                      display: flex;
+                      align-items: center;
+                      justify-content: center;
+                      cursor: pointer;
+                      box-shadow: ${
+                        isShaking
+                          ? '0 0 0 4px rgba(239, 68, 68, 0.15)'
+                          : isFilled
+                          ? '0 4px 14px rgba(2, 132, 199, 0.18)'
+                          : isActive
+                          ? '0 0 0 4px rgba(14, 165, 233, 0.18)'
+                          : '0 2px 4px rgba(0, 0, 0, 0.04)'
+                      };
+                      transition: all 0.15s ease;
+                    "
                   >
                     ${isFilled ? html`
-                      <!-- Masked Glowing Dot -->
                       <div style="
-                        width: 14px;
-                        height: 14px;
+                        width: 16px;
+                        height: 16px;
                         border-radius: 50%;
-                        background: #FFFFFF;
-                        box-shadow: 0 0 8px rgba(255, 255, 255, 0.8);
-                        animation: dot-pop 0.18s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+                        background: linear-gradient(135deg, #0284c7 0%, #1d4ed8 100%);
+                        box-shadow: 0 2px 8px rgba(2, 132, 199, 0.45);
+                        animation: pin-dot-pop 0.16s ease-out;
                       "></div>
-                    ` : (isActive ? html`
-                      <!-- Active Column Cursor Indicator -->
+                    ` : isActive ? html`
                       <div style="
-                        width: 2px;
-                        height: 24px;
-                        background: #38BDF8;
+                        width: 2.5px;
+                        height: 26px;
+                        background: #0284c7;
                         border-radius: 1px;
-                        animation: cursor-pulse 1s infinite;
+                        animation: pin-cursor-blink 0.9s infinite;
                       "></div>
-                    ` : '')}
+                    ` : ''}
                   </div>
                 `;
               })}
             </div>
 
-            <!-- "Log in" Action Button matching reference screenshot -->
+            <!-- Primary "Log in" Button in Bright Marketing Cerulean/Ocean Blue -->
             <button
               type="button"
-              class="btn bank-btn-touch"
+              class="lsc-touch-btn"
               onClick=${() => executePinLogin(currentPinString)}
-              disabled=${loading || currentPinString.length !== 4}
+              disabled=${loading}
               style="
                 width: 100%;
                 height: 52px;
-                background: #2A6B63;
-                color: #FFFFFF;
+                background: ${currentPinString.length === 4
+                  ? 'linear-gradient(135deg, #0284c7 0%, #1d4ed8 100%)'
+                  : 'linear-gradient(135deg, #0284c7 0%, #2563eb 100%)'};
+                color: #ffffff;
                 font-size: 16px;
-                font-weight: 600;
+                font-weight: 700;
                 border: none;
                 border-radius: 12px;
                 cursor: pointer;
-                transition: opacity 0.15s;
-                opacity: ${currentPinString.length === 4 && !loading ? '1' : '0.55'};
                 margin-bottom: 16px;
                 display: flex;
                 align-items: center;
                 justify-content: center;
                 gap: 8px;
+                box-shadow: 0 4px 16px rgba(2, 132, 199, 0.35);
               "
             >
               ${loading ? html`
-                <div class="spinner" style="width: 20px; height: 20px; margin: 0; border-width: 2.5px;"></div>
-                <span>Verifying PIN...</span>
+                <div class="spinner" style="width: 18px; height: 18px; margin: 0; border-width: 2px; border-color: rgba(255,255,255,0.3); border-top-color: #ffffff;"></div>
+                <span>Opening Account...</span>
               ` : 'Log in'}
             </button>
 
-            <!-- 4-DIGIT KEYPAD LAYOUT (0-9, CLEAR, BACKSPACE) -->
+            <!-- Tactile 4-Digit Keypad (Bright Crisp White Buttons with Slate Numerals) -->
             <div style="
               display: grid;
               grid-template-columns: repeat(3, 1fr);
-              gap: 10px;
-              margin-bottom: 18px;
-              padding: 0 4px;
+              gap: 9px;
+              margin-bottom: 14px;
             ">
               ${keypadRows.map((row) =>
                 row.map((item) => {
@@ -458,27 +723,26 @@ export default function Login() {
                     return html`
                       <button
                         type="button"
-                        class="bank-btn-touch"
+                        class="lsc-touch-btn"
                         onClick=${handleClear}
                         disabled=${loading}
                         style="
-                          height: 56px;
-                          background: ${isPressed ? 'rgba(239, 68, 68, 0.3)' : 'rgba(255, 255, 255, 0.04)'};
-                          border: 1px solid rgba(255, 255, 255, 0.08);
+                          height: 52px;
+                          background: ${isPressed ? '#fee2e2' : '#fef2f2'};
+                          border: 1.5px solid #fecdd3;
                           border-radius: 12px;
-                          color: #94A3B8;
-                          font-size: 13px;
-                          font-weight: 700;
+                          color: #dc2626;
+                          font-size: 12px;
+                          font-weight: 800;
+                          letter-spacing: 0.6px;
                           cursor: pointer;
                           display: flex;
-                          flex-direction: column;
                           align-items: center;
                           justify-content: center;
+                          box-shadow: 0 1px 2px rgba(220, 38, 38, 0.05);
                         "
-                        title="Clear all digits"
                       >
-                        <span style="font-size: 16px; line-height: 1;">✕</span>
-                        <span style="font-size: 9px; opacity: 0.7; margin-top: 2px;">CLEAR</span>
+                        CLEAR
                       </button>
                     `;
                   }
@@ -488,85 +752,73 @@ export default function Login() {
                     return html`
                       <button
                         type="button"
-                        class="bank-btn-touch"
+                        class="lsc-touch-btn"
                         onClick=${handleBackspace}
                         disabled=${loading}
                         style="
-                          height: 56px;
-                          background: ${isPressed ? 'rgba(42, 107, 99, 0.4)' : 'rgba(255, 255, 255, 0.04)'};
-                          border: 1px solid rgba(255, 255, 255, 0.08);
+                          height: 52px;
+                          background: ${isPressed ? '#e0f2fe' : '#ffffff'};
+                          border: 1.5px solid ${isPressed ? '#38bdf8' : '#e2e8f0'};
                           border-radius: 12px;
-                          color: #CBD5E1;
-                          font-size: 18px;
-                          font-weight: 600;
+                          color: ${isPressed ? '#0284c7' : '#475569'};
                           cursor: pointer;
                           display: flex;
-                          flex-direction: column;
                           align-items: center;
                           justify-content: center;
+                          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
                         "
-                        title="Delete previous digit"
+                        title="Delete"
                       >
-                        <svg style="width: 20px; height: 20px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M3 12l6.414-6.414A2 2 0 0110.828 5H20a2 2 0 012 2v10a2 2 0 01-2 2h-9.172a2 2 0 01-1.414-.586L3 12z"></path>
+                        <svg style="width: 22px; height: 22px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M3 12l6.414-6.414A2 2 0 0110.828 5H20a2 2 0 012 2v10a2 2 0 01-2 2h-9.172a2 2 0 01-1.414-.586L3 12z" />
                         </svg>
-                        <span style="font-size: 9px; opacity: 0.7; margin-top: 2px;">DELETE</span>
                       </button>
                     `;
                   }
 
-                  // Number Digit (0-9)
                   const isPressed = activeKey === item.digit;
                   return html`
                     <button
                       type="button"
-                      class="bank-btn-touch"
+                      class="lsc-touch-btn"
                       onClick=${() => handleInputDigit(item.digit)}
                       disabled=${loading}
                       style="
-                        height: 56px;
-                        background: ${isPressed ? 'rgba(42, 107, 99, 0.45)' : 'rgba(255, 255, 255, 0.06)'};
-                        border: 1px solid rgba(255, 255, 255, 0.08);
+                        height: 52px;
+                        background: ${isPressed ? '#e0f2fe' : '#ffffff'};
+                        border: 1.5px solid ${isPressed ? '#38bdf8' : '#e2e8f0'};
                         border-radius: 12px;
-                        color: #FFFFFF;
+                        color: #0f172a;
                         cursor: pointer;
                         display: flex;
                         flex-direction: column;
                         align-items: center;
                         justify-content: center;
+                        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.04);
                       "
                     >
-                      <span style="font-size: 22px; font-weight: 600; line-height: 1;">${item.digit}</span>
+                      <span style="font-size: 22px; font-weight: 700; line-height: 1.05; color: #0f172a;">${item.digit}</span>
                       ${item.letters ? html`
-                        <span style="font-size: 9px; font-weight: 600; color: #8BA2AD; letter-spacing: 1px; margin-top: 2px;">
+                        <span style="font-size: 9px; font-weight: 700; color: #64748b; letter-spacing: 1.1px; margin-top: 1px;">
                           ${item.letters}
                         </span>
-                      ` : html`<span style="height: 11px;"></span>`}
+                      ` : ''}
                     </button>
                   `;
                 })
               )}
             </div>
-
-          ` : html`
-            <!-- Standard Username / Password Mode -->
-            <form onSubmit=${handleUsernameSubmit} style="margin-bottom: 20px;">
-              <div style="margin-bottom: 14px;">
-                <label style="display: block; font-size: 13px; font-weight: 500; color: #CBD5E1; margin-bottom: 6px;">
+          ` : mode === 'username' ? html`
+            <!-- Username & Password Login Form in Bright Light Mode -->
+            <form onSubmit=${handleUsernameSubmit} style="margin-bottom: 16px;">
+              <div style="margin-bottom: 12px;">
+                <label style="display: block; font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 6px;">
                   Username
                 </label>
                 <input
                   type="text"
-                  class="form-input"
-                  style="
-                    background: #0F1D23;
-                    border: 1.5px solid #1E3640;
-                    color: #FFFFFF;
-                    padding: 12px;
-                    border-radius: 10px;
-                    width: 100%;
-                  "
-                  placeholder="e.g. admin or leader1"
+                  class="lsc-input-light"
+                  placeholder="Enter username (e.g. admin)"
                   value=${username}
                   onInput=${(e) => setUsername(e.target.value)}
                   required
@@ -575,24 +827,16 @@ export default function Login() {
                 />
               </div>
 
-              <div style="margin-bottom: 20px; position: relative;">
-                <label style="display: block; font-size: 13px; font-weight: 500; color: #CBD5E1; margin-bottom: 6px;">
+              <div style="margin-bottom: 16px;">
+                <label style="display: block; font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 6px;">
                   Password
                 </label>
                 <div style="position: relative;">
                   <input
                     type=${showPass ? 'text' : 'password'}
-                    class="form-input"
-                    style="
-                      background: #0F1D23;
-                      border: 1.5px solid #1E3640;
-                      color: #FFFFFF;
-                      padding: 12px;
-                      padding-right: 56px;
-                      border-radius: 10px;
-                      width: 100%;
-                    "
-                    placeholder="Enter account password"
+                    class="lsc-input-light"
+                    style="padding-right: 60px;"
+                    placeholder="Enter password"
                     value=${password}
                     onInput=${(e) => setPassword(e.target.value)}
                     required
@@ -609,9 +853,9 @@ export default function Login() {
                       transform: translateY(-50%);
                       background: transparent;
                       border: none;
-                      color: #8BA2AD;
+                      color: #0284c7;
                       font-size: 11px;
-                      font-weight: 700;
+                      font-weight: 800;
                       cursor: pointer;
                     "
                   >
@@ -622,15 +866,15 @@ export default function Login() {
 
               <button
                 type="submit"
-                class="btn bank-btn-touch"
+                class="lsc-touch-btn"
                 disabled=${loading}
                 style="
                   width: 100%;
                   height: 52px;
-                  background: #2A6B63;
-                  color: #FFFFFF;
+                  background: linear-gradient(135deg, #0284c7 0%, #1d4ed8 100%);
+                  color: #ffffff;
                   font-size: 16px;
-                  font-weight: 600;
+                  font-weight: 700;
                   border: none;
                   border-radius: 12px;
                   cursor: pointer;
@@ -638,170 +882,239 @@ export default function Login() {
                   align-items: center;
                   justify-content: center;
                   gap: 8px;
+                  box-shadow: 0 4px 14px rgba(2, 132, 199, 0.35);
                 "
               >
-                ${loading ? html`
-                  <div class="spinner" style="width: 20px; height: 20px; margin: 0; border-width: 2.5px;"></div>
-                  <span>Signing In...</span>
-                ` : 'Sign In with Username'}
+                ${loading ? 'Signing In...' : 'Log in with Username'}
+              </button>
+            </form>
+          ` : html`
+            <!-- Phone + PIN Login Form in Bright Light Mode -->
+            <form onSubmit=${handlePhonePinSubmit} style="margin-bottom: 16px;">
+              <div style="margin-bottom: 12px;">
+                <label style="display: block; font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 6px;">
+                  Phone Number
+                </label>
+                <input
+                  type="tel"
+                  class="lsc-input-light"
+                  placeholder="Enter registered phone number"
+                  value=${phone}
+                  onInput=${(e) => setPhone(e.target.value)}
+                  required
+                  disabled=${loading}
+                />
+              </div>
+
+              <div style="margin-bottom: 16px;">
+                <label style="display: block; font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 6px;">
+                  4-Digit or 6-Digit PIN
+                </label>
+                <input
+                  type="password"
+                  inputmode="numeric"
+                  maxlength="6"
+                  class="lsc-input-light"
+                  placeholder="Enter your PIN"
+                  value=${phonePin}
+                  onInput=${(e) => setPhonePin(e.target.value)}
+                  required
+                  disabled=${loading}
+                />
+              </div>
+
+              <button
+                type="submit"
+                class="lsc-touch-btn"
+                disabled=${loading}
+                style="
+                  width: 100%;
+                  height: 52px;
+                  background: linear-gradient(135deg, #0284c7 0%, #1d4ed8 100%);
+                  color: #ffffff;
+                  font-size: 16px;
+                  font-weight: 700;
+                  border: none;
+                  border-radius: 12px;
+                  cursor: pointer;
+                  display: flex;
+                  align-items: center;
+                  justify-content: center;
+                  box-shadow: 0 4px 14px rgba(2, 132, 199, 0.35);
+                "
+              >
+                ${loading ? 'Signing In...' : 'Log in with Phone + PIN'}
               </button>
             </form>
           `}
 
-          <!-- Toggle Button: "In our page use a button login through username" -->
-          <button
-            type="button"
-            class="bank-btn-touch"
-            onClick=${() => {
-              setMode(mode === 'pin' ? 'username' : 'pin');
-              setError('');
-            }}
-            style="
-              width: 100%;
-              height: 46px;
-              background: rgba(255, 255, 255, 0.05);
-              border: 1px solid rgba(255, 255, 255, 0.12);
-              border-radius: 10px;
-              color: #CBD5E1;
-              font-size: 13px;
-              font-weight: 600;
-              cursor: pointer;
-              margin-bottom: 18px;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              gap: 8px;
-            "
-          >
-            <span>${mode === 'pin' ? '🔑 Log in with Username & Password' : '🔢 Switch to 4-Digit Bank PIN Keypad'}</span>
-          </button>
-        </div>
-
-        <!-- SMALL SANDBOX: 1-Tap Direct Enter for all users -->
-        <div style="
-          background: rgba(15, 29, 35, 0.75);
-          border: 1px solid rgba(42, 107, 99, 0.35);
-          border-radius: 12px;
-          padding: 12px 10px;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.25);
-        ">
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-            <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #5EEAD4; display: flex; align-items: center; gap: 4px;">
-              <span>⚡</span> Small Sandbox (1-Tap Fast Enter)
-            </span>
-            <span style="font-size: 10px; color: #8BA2AD;">Auto 4-Digit PIN</span>
-          </div>
-
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
+          <!-- Secondary Login Mode Switcher Buttons (Crisp Light Cards) -->
+          <div style="display: flex; gap: 8px; margin-bottom: 14px;">
             <button
               type="button"
-              class="bank-btn-touch"
+              class="lsc-touch-btn"
+              onClick=${() => setMode(mode === 'username' ? 'pin' : 'username')}
+              style="
+                flex: 1;
+                height: 44px;
+                background: #ffffff;
+                border: 1.5px solid #bae6fd;
+                border-radius: 12px;
+                color: #0284c7;
+                font-size: 13px;
+                font-weight: 700;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 6px;
+                box-shadow: 0 1px 3px rgba(2, 132, 199, 0.08);
+              "
+            >
+              <span>${mode === 'username' ? '🔢 4-Digit PIN Keypad' : '👤 Login through Username'}</span>
+            </button>
+
+            <button
+              type="button"
+              class="lsc-touch-btn"
+              onClick=${() => setMode(mode === 'phone' ? 'pin' : 'phone')}
+              style="
+                padding: 0 14px;
+                height: 44px;
+                background: #ffffff;
+                border: 1.5px solid #e2e8f0;
+                border-radius: 12px;
+                color: #475569;
+                font-size: 12px;
+                font-weight: 700;
+                cursor: pointer;
+                white-space: nowrap;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+              "
+            >
+              ${mode === 'phone' ? '4-Digit PIN' : 'Phone + PIN'}
+            </button>
+          </div>
+        </div>
+      `}
+
+        <!-- 1-Tap Sandbox for Instant Demo / Role Switching (Clean White Card with Bright Badges) -->
+        <div style="
+          background: #ffffff;
+          border: 1.5px solid #e2e8f0;
+          box-shadow: 0 4px 14px rgba(0, 0, 0, 0.04);
+          border-radius: 14px;
+          padding: 12px;
+        ">
+          <div style="
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 8px;
+          ">
+            <span style="font-size: 11px; font-weight: 800; color: #0284c7; letter-spacing: 0.5px; text-transform: uppercase;">
+              Quick Demo Sandbox (1-Tap Enter)
+            </span>
+            <span style="font-size: 11px; color: #64748b; font-weight: 500;">
+              Tap or type PIN
+            </span>
+          </div>
+
+          <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px;">
+            <button
+              type="button"
+              class="lsc-touch-btn"
               onClick=${() => handleSandboxEnter('1111')}
               disabled=${loading}
               style="
                 padding: 8px 10px;
-                background: #13252E;
-                border: 1px solid #1E3844;
-                border-radius: 8px;
-                color: #F1F5F9;
+                background: #f8fafc;
+                border: 1.5px solid #e2e8f0;
+                border-radius: 10px;
+                color: #0f172a;
                 font-size: 12px;
-                font-weight: 600;
+                font-weight: 700;
                 cursor: pointer;
-                text-align: left;
                 display: flex;
                 align-items: center;
                 justify-content: space-between;
               "
             >
-              <span>👑 Super Admin</span>
-              <span style="background: #2A6B63; color: white; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 700;">1111</span>
+              <span>Super Admin</span>
+              <span style="background: #e0f2fe; color: #0284c7; padding: 2px 7px; border-radius: 6px; font-size: 11px; font-weight: 800; font-family: monospace;">1111</span>
             </button>
 
             <button
               type="button"
-              class="bank-btn-touch"
+              class="lsc-touch-btn"
               onClick=${() => handleSandboxEnter('2222')}
               disabled=${loading}
               style="
                 padding: 8px 10px;
-                background: #13252E;
-                border: 1px solid #1E3844;
-                border-radius: 8px;
-                color: #F1F5F9;
+                background: #f8fafc;
+                border: 1.5px solid #e2e8f0;
+                border-radius: 10px;
+                color: #0f172a;
                 font-size: 12px;
-                font-weight: 600;
+                font-weight: 700;
                 cursor: pointer;
-                text-align: left;
                 display: flex;
                 align-items: center;
                 justify-content: space-between;
               "
             >
-              <span>🕌 Usthad</span>
-              <span style="background: #2A6B63; color: white; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 700;">2222</span>
+              <span>Usthad</span>
+              <span style="background: #e0f2fe; color: #0284c7; padding: 2px 7px; border-radius: 6px; font-size: 11px; font-weight: 800; font-family: monospace;">2222</span>
             </button>
 
             <button
               type="button"
-              class="bank-btn-touch"
+              class="lsc-touch-btn"
               onClick=${() => handleSandboxEnter('3333')}
               disabled=${loading}
               style="
                 padding: 8px 10px;
-                background: #13252E;
-                border: 1px solid #1E3844;
-                border-radius: 8px;
-                color: #F1F5F9;
+                background: #f8fafc;
+                border: 1.5px solid #e2e8f0;
+                border-radius: 10px;
+                color: #0f172a;
                 font-size: 12px;
-                font-weight: 600;
+                font-weight: 700;
                 cursor: pointer;
-                text-align: left;
                 display: flex;
                 align-items: center;
                 justify-content: space-between;
               "
             >
-              <span>🛡️ Team Leader</span>
-              <span style="background: #2A6B63; color: white; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 700;">3333</span>
+              <span>Team Leader</span>
+              <span style="background: #e0f2fe; color: #0284c7; padding: 2px 7px; border-radius: 6px; font-size: 11px; font-weight: 800; font-family: monospace;">3333</span>
             </button>
 
             <button
               type="button"
-              class="bank-btn-touch"
+              class="lsc-touch-btn"
               onClick=${() => handleSandboxEnter('4444')}
               disabled=${loading}
               style="
                 padding: 8px 10px;
-                background: #13252E;
-                border: 1px solid #1E3844;
-                border-radius: 8px;
-                color: #F1F5F9;
+                background: #f8fafc;
+                border: 1.5px solid #e2e8f0;
+                border-radius: 10px;
+                color: #0f172a;
                 font-size: 12px;
-                font-weight: 600;
+                font-weight: 700;
                 cursor: pointer;
-                text-align: left;
                 display: flex;
                 align-items: center;
                 justify-content: space-between;
               "
             >
-              <span>👤 Team Member</span>
-              <span style="background: #2A6B63; color: white; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 700;">4444</span>
+              <span>Member</span>
+              <span style="background: #e0f2fe; color: #0284c7; padding: 2px 7px; border-radius: 6px; font-size: 11px; font-weight: 800; font-family: monospace;">4444</span>
             </button>
           </div>
         </div>
-
       </div>
-
-      <!-- Footer Info -->
-      <footer style="
-        text-align: center;
-        padding: 8px 0;
-        font-size: 11px;
-        color: #64748B;
-      ">
-        Markazul Hidayathil Islamiyya · Annual Calendar Campaign
-      </footer>
     </div>
   `;
 }

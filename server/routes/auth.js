@@ -99,13 +99,51 @@ router.post('/login', loginLimiter, async (req, res) => {
     return res.json({
       success: true,
       data: {
-        user: user.toJSON(),
-        token // Provided for clients needing authorization header fallback
+        user: { ...user.toJSON(), mustChangePassword: Boolean(user.mustChangePassword) },
+        token, // Provided for clients needing authorization header fallback
+        mustChangePassword: Boolean(user.mustChangePassword)
       }
     });
   } catch (err) {
     console.error('Login error:', err);
     return res.status(500).json({ success: false, error: 'Server error during login.' });
+  }
+});
+
+// POST /api/auth/first-login-change-password - For users logging in with temporary credentials
+router.post('/first-login-change-password', authMiddleware, async (req, res) => {
+  try {
+    const { newPassword } = req.body;
+
+    if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
+      return res.status(400).json({ success: false, error: 'New permanent password must be at least 6 characters.' });
+    }
+
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found.' });
+    }
+
+    user.passwordHash = await bcrypt.hash(newPassword, 10);
+    user.mustChangePassword = false;
+    await user.save();
+
+    await logAudit({
+      entityType: 'user',
+      entityId: user._id,
+      action: 'first_login_password_change',
+      performedBy: user._id,
+      ipAddress: req.ip
+    });
+
+    return res.json({
+      success: true,
+      message: 'Password updated successfully. Welcome to your dashboard!',
+      data: { ...user.toJSON(), mustChangePassword: false }
+    });
+  } catch (err) {
+    console.error('First login password change error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to update password.' });
   }
 });
 

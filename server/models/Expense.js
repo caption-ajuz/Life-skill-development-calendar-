@@ -25,6 +25,24 @@ const expenseSchema = new mongoose.Schema(
       default: Date.now,
       index: true
     },
+    teamId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Team',
+      default: null,
+      index: true
+    },
+    memberId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+      index: true
+    },
+    status: {
+      type: String,
+      enum: ['recorded', 'approved', 'rejected'],
+      default: 'recorded',
+      index: true
+    },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
