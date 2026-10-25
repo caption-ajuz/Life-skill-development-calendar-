@@ -32,12 +32,110 @@ export default function Collections() {
   const [resubmitAmount, setResubmitAmount] = useState('');
   const [resubmitNotes, setResubmitNotes] = useState('');
 
+  // Team Overall Collection Mode State (For Leader & Admin)
+  const [teamInfo, setTeamInfo] = useState(null);
+  const [allTeams, setAllTeams] = useState([]);
+  const [selectedAdminTeamId, setSelectedAdminTeamId] = useState('');
+  const [overallEnabled, setOverallEnabled] = useState(false);
+  const [overallAmount, setOverallAmount] = useState('');
+  const [overallNotes, setOverallNotes] = useState('');
+  const [savingOverall, setSavingOverall] = useState(false);
+
   const loadAreas = async () => {
     try {
       const res = await api.get('/api/areas');
       if (res && res.success && res.data) setAreas(res.data);
     } catch (err) {
       console.warn('Could not fetch areas:', err);
+    }
+  };
+
+  const loadTeamInfo = async () => {
+    try {
+      const res = await api.get('/api/teams');
+      if (res && res.success && res.data) {
+        setAllTeams(res.data);
+        const myTeamId = user && user.teamId ? (user.teamId._id || user.teamId) : null;
+        const currentTargetId = myTeamId || selectedAdminTeamId || (res.data[0] ? res.data[0]._id : null);
+        const target = res.data.find((t) => t._id === currentTargetId);
+        if (target) {
+          setTeamInfo(target);
+          setOverallEnabled(Boolean(target.leaderEntersOverallCollection));
+          setOverallAmount(target.overallCollectedAmount ? String(target.overallCollectedAmount) : '');
+          setOverallNotes(target.overallCollectionNotes || '');
+        }
+      }
+    } catch (err) {
+      console.warn('Could not fetch teams:', err);
+    }
+  };
+
+  const handleSelectAdminTeam = (tId) => {
+    setSelectedAdminTeamId(tId);
+    const target = allTeams.find((t) => t._id === tId);
+    if (target) {
+      setTeamInfo(target);
+      setOverallEnabled(Boolean(target.leaderEntersOverallCollection));
+      setOverallAmount(target.overallCollectedAmount ? String(target.overallCollectedAmount) : '');
+      setOverallNotes(target.overallCollectionNotes || '');
+    }
+  };
+
+  const handleToggleOverallMode = async (targetEnabled) => {
+    const targetTeamId = teamInfo?._id || (user.teamId ? (user.teamId._id || user.teamId) : null);
+    if (!targetTeamId) {
+      if (window.showToast) window.showToast('No team selected.', 'error');
+      return;
+    }
+
+    setSavingOverall(true);
+    try {
+      const res = await api.put(`/api/teams/${targetTeamId}/overall-collection`, {
+        enabled: targetEnabled,
+        overallCollectedAmount: overallAmount ? parseFloat(overallAmount) : 0,
+        notes: overallNotes.trim()
+      });
+      if (res && res.success) {
+        setOverallEnabled(targetEnabled);
+        if (window.showToast) window.showToast(res.message || 'Overall collection mode updated! ✓', 'success');
+        loadTeamInfo();
+        loadRecent();
+      }
+    } catch (err) {
+      if (window.showToast) window.showToast(err.message || 'Failed to update overall mode.', 'error');
+    } finally {
+      setSavingOverall(false);
+    }
+  };
+
+  const handleSaveOverallAmount = async (e) => {
+    if (e) e.preventDefault();
+    const targetTeamId = teamInfo?._id || (user.teamId ? (user.teamId._id || user.teamId) : null);
+    if (!targetTeamId) return;
+
+    const amt = parseFloat(overallAmount);
+    if (isNaN(amt) || amt < 0) {
+      if (window.showToast) window.showToast('Please enter a valid overall amount.', 'error');
+      return;
+    }
+
+    setSavingOverall(true);
+    try {
+      const res = await api.put(`/api/teams/${targetTeamId}/overall-collection`, {
+        enabled: true,
+        overallCollectedAmount: amt,
+        notes: overallNotes.trim()
+      });
+      if (res && res.success) {
+        setOverallEnabled(true);
+        if (window.showToast) window.showToast(`Team overall collection saved: ${formatCurrency(amt)}! ✓`, 'success');
+        loadTeamInfo();
+        loadRecent();
+      }
+    } catch (err) {
+      if (window.showToast) window.showToast(err.message || 'Failed to save overall amount.', 'error');
+    } finally {
+      setSavingOverall(false);
     }
   };
 
@@ -120,11 +218,18 @@ export default function Collections() {
 
   useEffect(() => {
     loadAreas();
+    loadTeamInfo();
     loadRecent();
   }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    const isLocked = user && user.role === 'team_member' && teamInfo && teamInfo.leaderEntersOverallCollection;
+    if (isLocked) {
+      if (window.showToast) window.showToast('Team Leader has enabled Overall Collection Mode. Member self-entry is locked.', 'error');
+      return;
+    }
 
     const amt = parseFloat(amount);
     if (isNaN(amt) || amt <= 0) {
@@ -188,11 +293,155 @@ export default function Collections() {
     .filter((e) => e.date && e.date.startsWith(date))
     .reduce((sum, e) => sum + (e.amount || 0), 0);
 
+  const isLeader = user && user.role === 'team_leader';
+  const isAdmin = user && ['super_admin', 'usthad'].includes(user.role);
+  const isMemberLocked = user && user.role === 'team_member' && teamInfo && teamInfo.leaderEntersOverallCollection;
+
   return html`
     <div class="page">
+      <!-- TEAM LEADER / ADMIN OVERALL COLLECTION MODE TOGGLE -->
+      ${isLeader || isAdmin ? html`
+        <div class="card" style="border-top: 4px solid ${overallEnabled ? '#10b981' : '#94a3b8'}; margin-bottom: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
+            <div>
+              <div style="font-size: 16px; font-weight: 800; color: #0f172a; display: flex; align-items: center; gap: 8px;">
+                <span>⚡ Team Overall Collection Mode</span>
+                <span class="badge ${overallEnabled ? 'badge-success' : 'badge-neutral'}" style="font-size: 11px;">
+                  ${overallEnabled ? 'ON (Member Entry Locked)' : 'OFF (Member Entry Unlocked)'}
+                </span>
+              </div>
+              <p style="font-size: 12px; color: var(--text-secondary); margin: 3px 0 0;">
+                ${isLeader
+                  ? `Manage lump-sum overall collection for ${teamInfo ? teamInfo.name : 'your team'}. When ON, members cannot self-enter collections.`
+                  : 'Manage lump-sum overall collection mode for teams. Locks individual member self-entry.'}
+              </p>
+            </div>
+          </div>
+
+          ${isAdmin && allTeams.length > 0 ? html`
+            <div class="form-group" style="margin-bottom: 12px;">
+              <label class="form-label" style="font-size: 12px;">Select Team</label>
+              <select
+                class="form-input"
+                style="font-size: 13px;"
+                value=${teamInfo ? teamInfo._id : ''}
+                onChange=${(e) => handleSelectAdminTeam(e.target.value)}
+              >
+                ${allTeams.map(
+                  (t) => html`<option key=${t._id} value=${t._id}>
+                    ${t.name} ${t.leaderEntersOverallCollection ? '🟢 (Mode: ON)' : ''}
+                  </option>`
+                )}
+              </select>
+            </div>
+          ` : ''}
+
+          <!-- ON / OFF Toggle Bar -->
+          <div style="display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; background: ${overallEnabled ? '#ecfdf5' : '#f8fafc'}; border: 1.5px solid ${overallEnabled ? '#a7f3d0' : '#e2e8f0'}; border-radius: 12px; margin-bottom: 12px;">
+            <div>
+              <div style="font-weight: 700; font-size: 13px; color: ${overallEnabled ? '#065f46' : '#334155'};">
+                ${overallEnabled ? '🟢 Overall Collection Mode: ON' : '⚪ Overall Collection Mode: OFF'}
+              </div>
+              <div style="font-size: 11px; color: ${overallEnabled ? '#047857' : '#64748b'}; margin-top: 2px;">
+                ${overallEnabled
+                  ? '🔒 Member self-entry is LOCKED. Team Leader manages overall lump sum.'
+                  : '🔓 Member self-entry is UNLOCKED. Team members record individual entries.'}
+              </div>
+            </div>
+
+            <button
+              type="button"
+              class="btn ${overallEnabled ? 'btn-danger' : 'btn-success'} btn-sm"
+              style="font-weight: 700; min-width: 95px;"
+              onClick=${() => handleToggleOverallMode(!overallEnabled)}
+              disabled=${savingOverall}
+            >
+              ${savingOverall ? 'Saving...' : overallEnabled ? 'Turn OFF' : 'Turn ON'}
+            </button>
+          </div>
+
+          <!-- Overall Amount Input Form (Visible when mode is ON) -->
+          ${overallEnabled ? html`
+            <form onSubmit=${handleSaveOverallAmount} style="background: #ffffff; border: 1.5px dashed #a7f3d0; border-radius: 10px; padding: 12px;">
+              <div class="form-group" style="margin-bottom: 10px;">
+                <label class="form-label" style="font-size: 12px; color: #065f46; font-weight: 700;">
+                  Overall Total Amount Collected (₹) *
+                </label>
+                <div style="display: flex; gap: 8px;">
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    class="form-input"
+                    placeholder="e.g. 50000"
+                    value=${overallAmount}
+                    onInput=${(e) => setOverallAmount(e.target.value)}
+                    style="font-size: 20px; font-weight: 800; color: #059669; flex: 1;"
+                    required
+                  />
+                  <button
+                    type="submit"
+                    class="btn btn-primary"
+                    style="font-weight: 700; white-space: nowrap;"
+                    disabled=${savingOverall}
+                  >
+                    ${savingOverall ? 'Saving...' : 'Save Total ✓'}
+                  </button>
+                </div>
+              </div>
+
+              <div class="form-group" style="margin-bottom: 0;">
+                <label class="form-label" style="font-size: 11px; color: #64748b;">Notes / Remarks (Optional)</label>
+                <input
+                  type="text"
+                  class="form-input"
+                  placeholder="e.g. Total collected from shops and sponsors in lump-sum"
+                  value=${overallNotes}
+                  onInput=${(e) => setOverallNotes(e.target.value)}
+                  style="font-size: 12px;"
+                />
+              </div>
+
+              ${teamInfo && teamInfo.overallCollectedAmount ? html`
+                <div style="margin-top: 8px; font-size: 11px; color: #047857; font-weight: 600; display: flex; justify-content: space-between;">
+                  <span>Currently Saved: <b>${formatCurrency(teamInfo.overallCollectedAmount)}</b></span>
+                  ${teamInfo.overallCollectionUpdatedAt ? html`
+                    <span style="color: #64748b;">Updated: ${formatDate(teamInfo.overallCollectionUpdatedAt)}</span>
+                  ` : ''}
+                </div>
+              ` : ''}
+            </form>
+          ` : ''}
+        </div>
+      ` : ''}
+
+      <!-- MEMBER LOCKED ALERT BANNER -->
+      ${isMemberLocked ? html`
+        <div class="card" style="background: #fffbeb; border: 1.5px solid #fde68a; border-left: 5px solid #f59e0b; padding: 14px 16px; margin-bottom: 16px;">
+          <div style="display: flex; align-items: flex-start; gap: 12px;">
+            <span style="font-size: 26px; line-height: 1;">🔒</span>
+            <div>
+              <div style="font-size: 15px; font-weight: 800; color: #92400e; margin-bottom: 4px;">
+                Member Collection Entry Locked
+              </div>
+              <p style="font-size: 13px; color: #78350f; margin: 0 0 6px; line-height: 1.4;">
+                Your Team Leader has enabled <b>Overall Collection Mode</b> for <b>${teamInfo ? teamInfo.name : 'your team'}</b>.
+                The overall team collection is being managed directly as a lump-sum (Total: <b>${formatCurrency((teamInfo && teamInfo.overallCollectedAmount) || 0)}</b>).
+              </p>
+              <div style="font-size: 12px; color: #b45309; font-weight: 600;">
+                ⛔ Individual member collection entries are temporarily turned off.
+              </div>
+            </div>
+          </div>
+        </div>
+      ` : ''}
+
       <!-- Collection Entry Form -->
-      <div class="card">
-        <div class="card-title">Record Money Collection</div>
+      <div class="card" style="opacity: ${isMemberLocked ? '0.6' : '1'};">
+        <div class="card-title" style="display: flex; justify-content: space-between; align-items: center;">
+          <span>Record Money Collection</span>
+          ${isMemberLocked ? html`<span class="badge badge-warning" style="font-size: 11px;">🔒 Locked</span>` : ''}
+        </div>
         <form onSubmit=${handleSubmit}>
           <!-- Amount -->
           <div class="form-group">
@@ -204,6 +453,7 @@ export default function Collections() {
               placeholder="e.g. 500"
               value=${amount}
               onInput=${(e) => setAmount(e.target.value)}
+              disabled=${isMemberLocked}
               required
               style="font-size: 24px; font-weight: 700; color: #059669;"
             />
@@ -216,6 +466,7 @@ export default function Collections() {
               class="form-input"
               value=${areaId}
               onChange=${(e) => setAreaId(e.target.value)}
+              disabled=${isMemberLocked}
             >
               <option value="">Select an area</option>
               ${areas.map(
@@ -232,6 +483,7 @@ export default function Collections() {
               class="form-input"
               value=${date}
               onInput=${(e) => setDate(e.target.value)}
+              disabled=${isMemberLocked}
               required
             />
           </div>
@@ -245,6 +497,7 @@ export default function Collections() {
               placeholder="e.g. Ibrahim Haji, shop collection"
               value=${notes}
               onInput=${(e) => setNotes(e.target.value)}
+              disabled=${isMemberLocked}
             />
           </div>
 
@@ -255,6 +508,7 @@ export default function Collections() {
                 type="checkbox"
                 checked=${sendThankYou}
                 onChange=${(e) => setSendThankYou(e.target.checked)}
+                disabled=${isMemberLocked}
                 style="width: 18px; height: 18px;"
               />
               <span>Send WhatsApp Thank-You Note</span>
@@ -269,6 +523,7 @@ export default function Collections() {
                       placeholder="Donor Name"
                       value=${donorName}
                       onInput=${(e) => setDonorName(e.target.value)}
+                      disabled=${isMemberLocked}
                     />
                     <input
                       type="tel"
@@ -276,6 +531,7 @@ export default function Collections() {
                       placeholder="WhatsApp Mobile Number"
                       value=${donorPhone}
                       onInput=${(e) => setDonorPhone(e.target.value)}
+                      disabled=${isMemberLocked}
                     />
                     <p style="font-size: 11px; color: var(--text-secondary); margin: 0;">
                       Opens WhatsApp message for you to manually review and send.
@@ -287,10 +543,10 @@ export default function Collections() {
 
           <button
             type="submit"
-            class="btn btn-success btn-full"
-            disabled=${loading}
+            class="btn ${isMemberLocked ? 'btn-secondary' : 'btn-success'} btn-full"
+            disabled=${loading || isMemberLocked}
           >
-            ${loading ? 'Recording...' : 'Save Collection ✓'}
+            ${isMemberLocked ? '🔒 Member Entry Locked (Overall Mode Active)' : loading ? 'Recording...' : 'Save Collection ✓'}
           </button>
         </form>
       </div>

@@ -56,7 +56,7 @@ router.get('/', async (req, res) => {
 
     const [users, total] = await Promise.all([
       User.find(query)
-        .select('-passwordHash -pinHash -passwordHint -pinHint')
+        .select('-passwordHash -pinHash')
         .populate('teamId', 'name')
         .sort({ fullName: 1 })
         .skip(skip)
@@ -156,6 +156,8 @@ router.post('/', requireRole('super_admin', 'team_leader'), async (req, res) => 
       username: cleanUsername,
       passwordHash,
       pinHash,
+      passwordHint: password,
+      pinHint: cleanPin || '',
       fullName: fullName.trim(),
       phone: normalizedPhone,
       role: assignedRole,
@@ -484,6 +486,7 @@ router.put('/:id/reset-password', async (req, res) => {
       : `LSC@${Math.floor(1000 + Math.random() * 9000)}`;
 
     user.passwordHash = await bcrypt.hash(tempPassword, 10);
+    user.passwordHint = tempPassword;
     user.mustChangePassword = true; // User must change password upon first login
     await user.save();
 
@@ -491,7 +494,7 @@ router.put('/:id/reset-password', async (req, res) => {
       entityType: 'user',
       entityId: user._id,
       action: 'reset_password',
-      newValues: { mustChangePassword: true },
+      newValues: { mustChangePassword: true, passwordHint: tempPassword },
       performedBy: req.user._id,
       ipAddress: req.ip
     });
@@ -500,7 +503,9 @@ router.put('/:id/reset-password', async (req, res) => {
       success: true,
       message: 'Temporary password generated successfully.',
       temporaryPassword: tempPassword,
-      mustChangePassword: true
+      passwordHint: tempPassword,
+      mustChangePassword: true,
+      data: user.toJSON()
     });
   } catch (err) {
     console.error('Reset password error:', err);
@@ -543,13 +548,14 @@ router.put('/:id/reset-pin', async (req, res) => {
       : String(Math.floor(1000 + Math.random() * 9000));
 
     user.pinHash = await bcrypt.hash(cleanPin, 10);
+    user.pinHint = cleanPin;
     await user.save();
 
     await logAudit({
       entityType: 'user',
       entityId: user._id,
       action: 'reset_pin',
-      newValues: { pinReset: true },
+      newValues: { pinReset: true, pinHint: cleanPin },
       performedBy: req.user._id,
       ipAddress: req.ip
     });
@@ -557,7 +563,9 @@ router.put('/:id/reset-pin', async (req, res) => {
     return res.json({
       success: true,
       message: 'PIN reset successfully.',
-      temporaryPin: cleanPin
+      temporaryPin: cleanPin,
+      pinHint: cleanPin,
+      data: user.toJSON()
     });
   } catch (err) {
     console.error('Reset PIN error:', err);
@@ -596,22 +604,26 @@ router.put('/:id/credentials', requireRole('super_admin'), async (req, res) => {
 
     if (clearPassword === true) {
       user.passwordHash = await bcrypt.hash('cleared_' + Math.random().toString(36), 10);
+      user.passwordHint = '';
     } else if (password && typeof password === 'string') {
       if (password.length < 4) {
         return res.status(400).json({ success: false, error: 'Password must be at least 4 characters.' });
       }
       user.passwordHash = await bcrypt.hash(password, 10);
+      user.passwordHint = password;
       user.mustChangePassword = false;
     }
 
     if (clearPin === true) {
       user.pinHash = null;
+      user.pinHint = '';
     } else if (pin && typeof pin === 'string') {
       const cleanPin = pin.trim();
       if (!/^\d{4,6}$/.test(cleanPin)) {
         return res.status(400).json({ success: false, error: 'PIN must be 4 or 6 numeric digits.' });
       }
       user.pinHash = await bcrypt.hash(cleanPin, 10);
+      user.pinHint = cleanPin;
     }
 
     await user.save();

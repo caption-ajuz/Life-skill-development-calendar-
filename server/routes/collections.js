@@ -111,6 +111,18 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ success: false, error: 'User is not assigned to a team.' });
     }
 
+    // Guard: If team leader has enabled overall collection mode, regular team members cannot enter collections
+    if (req.user.role === 'team_member') {
+      const Team = (await import('../models/Team.js')).default;
+      const teamDoc = await Team.findById(teamId);
+      if (teamDoc && teamDoc.leaderEntersOverallCollection) {
+        return res.status(403).json({
+          success: false,
+          error: 'Team Leader has enabled Overall Collection Mode. Member self-entry is locked.'
+        });
+      }
+    }
+
     const cleanIncomeType = ['calendar_sale', 'donation', 'other_income'].includes(incomeType)
       ? incomeType
       : 'calendar_sale';

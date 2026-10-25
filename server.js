@@ -221,24 +221,38 @@ async function seedDefaults() {
     }
 
     // 2. Admin (PIN 1111)
+    const defaultAdminPassword = process.env.ADMIN_DEFAULT_PASSWORD || 'admin123';
     let admin = await User.findOne({ role: 'super_admin' }).select('+pinHash');
     if (!admin) {
-      const defaultPassword = process.env.ADMIN_DEFAULT_PASSWORD || 'admin123';
-      const passwordHash = await bcrypt.hash(defaultPassword, 10);
+      const passwordHash = await bcrypt.hash(defaultAdminPassword, 10);
       const pinHash = await bcrypt.hash('1111', 10);
       admin = await User.create({
         username: 'admin',
         passwordHash,
         pinHash,
+        passwordHint: defaultAdminPassword,
+        pinHint: '1111',
         fullName: 'Super Admin',
         phone: '9876543210',
         role: 'super_admin',
         isActive: true
       });
       console.log('✅ Default Super Admin created in MongoDB (username: admin, PIN: 1111)');
-    } else if (!admin.pinHash) {
-      admin.pinHash = await bcrypt.hash('1111', 10);
-      await admin.save();
+    } else {
+      let needsSave = false;
+      if (!admin.pinHash) {
+        admin.pinHash = await bcrypt.hash('1111', 10);
+        needsSave = true;
+      }
+      if (!admin.passwordHint) {
+        admin.passwordHint = defaultAdminPassword;
+        needsSave = true;
+      }
+      if (!admin.pinHint) {
+        admin.pinHint = '1111';
+        needsSave = true;
+      }
+      if (needsSave) await admin.save();
     }
 
     // 3. Usthad (PIN 2222)
@@ -250,12 +264,18 @@ async function seedDefaults() {
         username: 'usthad',
         passwordHash,
         pinHash,
+        passwordHint: 'usthad123',
+        pinHint: '2222',
         fullName: 'Usthad Abdullah',
         phone: '9876543211',
         role: 'usthad',
         isActive: true
       });
       console.log('✅ Default Usthad created in MongoDB (username: usthad, PIN: 2222)');
+    } else if (!usthad.passwordHint || !usthad.pinHint) {
+      if (!usthad.passwordHint) usthad.passwordHint = 'usthad123';
+      if (!usthad.pinHint) usthad.pinHint = '2222';
+      await usthad.save();
     }
 
     // 4. Team Leader (PIN 3333)
@@ -267,6 +287,8 @@ async function seedDefaults() {
         username: 'leader1',
         passwordHash,
         pinHash,
+        passwordHint: 'leader123',
+        pinHint: '3333',
         fullName: 'Ahmed Bilal',
         phone: '9876543212',
         role: 'team_leader',
@@ -274,6 +296,10 @@ async function seedDefaults() {
         isActive: true
       });
       console.log('✅ Default Team Leader created in MongoDB (username: leader1, PIN: 3333)');
+    } else if (!leader.passwordHint || !leader.pinHint) {
+      if (!leader.passwordHint) leader.passwordHint = 'leader123';
+      if (!leader.pinHint) leader.pinHint = '3333';
+      await leader.save();
     }
 
     // 5. Team Member (PIN 4444)
@@ -285,6 +311,8 @@ async function seedDefaults() {
         username: 'member1',
         passwordHash,
         pinHash,
+        passwordHint: 'member123',
+        pinHint: '4444',
         fullName: 'Zaid Rahman',
         phone: '9876543213',
         role: 'team_member',
@@ -292,6 +320,10 @@ async function seedDefaults() {
         isActive: true
       });
       console.log('✅ Default Team Member created in MongoDB (username: member1, PIN: 4444)');
+    } else if (!member.passwordHint || !member.pinHint) {
+      if (!member.passwordHint) member.passwordHint = 'member123';
+      if (!member.pinHint) member.pinHint = '4444';
+      await member.save();
     }
 
     // 6. Campaign Config

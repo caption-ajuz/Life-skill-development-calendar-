@@ -445,7 +445,12 @@ export default function Teams() {
                     </div>
 
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 13px;">
-                      <span style="color: var(--text-secondary);">Collections:</span>
+                      <div style="display: flex; align-items: center; gap: 6px;">
+                        <span style="color: var(--text-secondary);">Collections:</span>
+                        ${t.leaderEntersOverallCollection ? html`
+                          <span class="badge badge-success" style="font-size: 10px; padding: 2px 6px;">⚡ Overall Mode</span>
+                        ` : ''}
+                      </div>
                       <b style="color: #059669;">${formatCurrency(t.totalCollected)}</b>
                     </div>
                   </div>

@@ -36,15 +36,23 @@ router.get('/', async (req, res) => {
           StockAllocation.findOne({ teamId, memberId: null })
         ]);
 
+        const totalCollected = t.leaderEntersOverallCollection
+          ? (t.overallCollectedAmount || 0)
+          : (colAgg[0] ? colAgg[0].total : 0);
+
         return {
           _id: t._id,
           name: t.name,
           description: t.description,
           isActive: t.isActive,
+          leaderEntersOverallCollection: Boolean(t.leaderEntersOverallCollection),
+          overallCollectedAmount: t.overallCollectedAmount || 0,
+          overallCollectionNotes: t.overallCollectionNotes || '',
+          overallCollectionUpdatedAt: t.overallCollectionUpdatedAt || null,
           createdAt: t.createdAt,
           memberCount,
           totalDistributed: distAgg[0] ? distAgg[0].total : 0,
-          totalCollected: colAgg[0] ? colAgg[0].total : 0,
+          totalCollected,
           allocatedStock: stockAlloc ? stockAlloc.quantity : 0
         };
       })
@@ -193,6 +201,95 @@ router.put('/:id', requireRole('super_admin'), async (req, res) => {
   } catch (err) {
     console.error('Update team error:', err);
     return res.status(500).json({ success: false, error: 'Failed to update team.' });
+  }
+});
+
+// PUT /api/teams/:id/overall-collection - Toggle overall collection mode & update lump sum total
+router.put('/:id/overall-collection', async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!isValidObjectId(id)) {
+      return res.status(400).json({ success: false, error: 'Invalid team ID.' });
+    }
+
+    const team = await Team.findById(id);
+    if (!team) {
+      return res.status(404).json({ success: false, error: 'Team not found.' });
+    }
+
+    // Role check: super_admin, usthad, or team_leader of this team
+    const isSuperAdmin = ['super_admin', 'usthad'].includes(req.user.role);
+    const userTeamId = req.user.teamId ? (req.user.teamId._id || req.user.teamId).toString() : null;
+    const isOwnLeader = req.user.role === 'team_leader' && userTeamId === id;
+
+    if (!isSuperAdmin && !isOwnLeader) {
+      return res.status(403).json({
+        success: false,
+        error: 'Permission denied: Only Team Leader of this team or Admin can modify overall collection mode.'
+      });
+    }
+
+    const { enabled, overallCollectedAmount, notes } = req.body;
+    const oldValues = {
+      leaderEntersOverallCollection: team.leaderEntersOverallCollection,
+      overallCollectedAmount: team.overallCollectedAmount,
+      overallCollectionNotes: team.overallCollectionNotes
+    };
+
+    if (enabled !== undefined) {
+      team.leaderEntersOverallCollection = Boolean(enabled);
+    }
+
+    if (overallCollectedAmount !== undefined) {
+      const amt = parseFloat(overallCollectedAmount);
+      if (isNaN(amt) || amt < 0) {
+        return res.status(400).json({ success: false, error: 'Overall collected amount must be a non-negative number.' });
+      }
+      team.overallCollectedAmount = amt;
+    }
+
+    if (notes !== undefined) {
+      team.overallCollectionNotes = typeof notes === 'string' ? notes.trim() : '';
+    }
+
+    team.overallCollectionUpdatedAt = new Date();
+    team.overallCollectionUpdatedBy = req.user._id;
+
+    await team.save();
+
+    await logAudit({
+      entityType: 'team',
+      entityId: team._id,
+      action: 'update_overall_collection',
+      oldValues,
+      newValues: {
+        leaderEntersOverallCollection: team.leaderEntersOverallCollection,
+        overallCollectedAmount: team.overallCollectedAmount,
+        overallCollectionNotes: team.overallCollectionNotes
+      },
+      performedBy: req.user._id,
+      ipAddress: req.ip
+    });
+
+    const io = req.app.get('io');
+    if (io) {
+      io.emit('team:overall_collection_updated', {
+        teamId: team._id,
+        leaderEntersOverallCollection: team.leaderEntersOverallCollection,
+        overallCollectedAmount: team.overallCollectedAmount
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: team.leaderEntersOverallCollection
+        ? `Overall collection mode enabled. Total: ₹${team.overallCollectedAmount}. Member self-entry is locked.`
+        : 'Overall collection mode disabled. Individual member entry is now unlocked.',
+      data: team
+    });
+  } catch (err) {
+    console.error('Update overall collection error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to update overall collection settings.' });
   }
 });
 

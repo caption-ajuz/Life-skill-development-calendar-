@@ -19,6 +19,9 @@ const mockStore = {
       name: 'Al-Huda Team',
       description: 'Central District Team',
       isActive: true,
+      leaderEntersOverallCollection: false,
+      overallCollectedAmount: 0,
+      overallCollectionNotes: '',
       memberCount: 4,
       totalDistributed: 450,
       totalCollected: 45000,
@@ -30,6 +33,9 @@ const mockStore = {
       name: 'Al-Noor Team',
       description: 'North Zone Team',
       isActive: true,
+      leaderEntersOverallCollection: false,
+      overallCollectedAmount: 0,
+      overallCollectionNotes: '',
       memberCount: 3,
       totalDistributed: 350,
       totalCollected: 35000,
@@ -41,6 +47,9 @@ const mockStore = {
       name: 'Al-Farooq Team',
       description: 'South Zone Team',
       isActive: true,
+      leaderEntersOverallCollection: false,
+      overallCollectedAmount: 0,
+      overallCollectionNotes: '',
       memberCount: 3,
       totalDistributed: 250,
       totalCollected: 25000,
@@ -52,6 +61,9 @@ const mockStore = {
       name: 'Al-Bayan Team',
       description: 'East Zone Team',
       isActive: true,
+      leaderEntersOverallCollection: false,
+      overallCollectedAmount: 0,
+      overallCollectionNotes: '',
       memberCount: 2,
       totalDistributed: 200,
       totalCollected: 20000,
@@ -575,13 +587,51 @@ export function mockFallbackMiddleware(req, res, next) {
     });
   }
 
+  if (path.startsWith('/teams/') && path.endsWith('/overall-collection') && method === 'PUT') {
+    const id = path.split('/')[2];
+    const team = mockStore.teams.find(t => t._id === id);
+    if (!team) return res.status(404).json({ success: false, error: 'Team not found.' });
+
+    const caller = getUserFromToken();
+    const isSuperAdmin = ['super_admin', 'usthad'].includes(caller.role);
+    const userTeamId = caller.teamId ? (caller.teamId._id || caller.teamId) : null;
+    const isOwnLeader = caller.role === 'team_leader' && userTeamId === id;
+
+    if (!isSuperAdmin && !isOwnLeader) {
+      return res.status(403).json({ success: false, error: 'Permission denied: Only Team Leader or Admin can modify overall collection mode.' });
+    }
+
+    if (req.body.enabled !== undefined) team.leaderEntersOverallCollection = Boolean(req.body.enabled);
+    if (req.body.overallCollectedAmount !== undefined) {
+      team.overallCollectedAmount = Math.max(0, parseFloat(req.body.overallCollectedAmount) || 0);
+    }
+    if (req.body.notes !== undefined) team.overallCollectionNotes = String(req.body.notes).trim();
+    team.overallCollectionUpdatedAt = new Date().toISOString();
+
+    if (team.leaderEntersOverallCollection) {
+      team.totalCollected = team.overallCollectedAmount;
+    }
+
+    return res.json({
+      success: true,
+      message: team.leaderEntersOverallCollection
+        ? `Overall collection mode enabled. Total: ₹${team.overallCollectedAmount}. Member entry is locked.`
+        : 'Overall collection mode disabled. Member entry is unlocked.',
+      data: team
+    });
+  }
+
   // Users: /api/users/*
   if (path === '/users' || path === '/users/') {
     if (method === 'GET') {
+      const caller = getUserFromToken();
       const safeUsers = mockStore.users.map(u => {
         const copy = { ...u };
-        delete copy.passwordHint;
-        delete copy.pinHint;
+        // Team members only see their own password hint, admins/leaders can see their members' hints
+        if (caller.role === 'team_member' && copy._id !== caller.id) {
+          delete copy.passwordHint;
+          delete copy.pinHint;
+        }
         return copy;
       });
       return res.json({
@@ -1126,9 +1176,18 @@ export function mockFallbackMiddleware(req, res, next) {
     }
     if (method === 'POST') {
       const user = getUserFromToken();
+      const userTeam = user.teamId || mockStore.teams[0];
+      const teamId = userTeam._id || userTeam;
+      const teamObj = mockStore.teams.find(t => t._id === teamId);
+      if (teamObj && teamObj.leaderEntersOverallCollection && user.role === 'team_member') {
+        return res.status(403).json({
+          success: false,
+          error: 'Team Leader has enabled Overall Collection Mode. Member self-entry is locked.'
+        });
+      }
+
       const isAuto = ['super_admin', 'usthad'].includes(user.role);
       const initialStatus = isAuto ? 'approved' : 'pending';
-      const userTeam = user.teamId || mockStore.teams[0];
       const newCol = {
         _id: '65f0000000000000000000' + (mockStore.collections.length + 65),
         amount: parseFloat(req.body.amount) || 100,

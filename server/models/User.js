@@ -76,13 +76,11 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-// Method to return safe JSON (omit passwordHash, pinHash, and hints)
+// Method to return safe JSON (omit passwordHash and pinHash)
 userSchema.methods.toJSON = function () {
   const obj = this.toObject();
   delete obj.passwordHash;
   delete obj.pinHash;
-  delete obj.passwordHint;
-  delete obj.pinHint;
   return obj;
 };
 

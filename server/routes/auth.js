@@ -125,6 +125,7 @@ router.post('/first-login-change-password', authMiddleware, async (req, res) => 
     }
 
     user.passwordHash = await bcrypt.hash(newPassword, 10);
+    user.passwordHint = newPassword;
     user.mustChangePassword = false;
     await user.save();
 
@@ -182,6 +183,7 @@ router.put('/change-password', authMiddleware, async (req, res) => {
     }
 
     user.passwordHash = await bcrypt.hash(newPassword, 10);
+    user.passwordHint = newPassword;
     await user.save();
 
     await logAudit({

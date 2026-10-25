@@ -84,7 +84,7 @@ router.get('/admin', requireRole('super_admin', 'usthad'), async (req, res) => {
     const netProfitOrLoss = totalCollected - totalExpenses;
 
     // Team rankings by distributed calendars
-    const teams = await Team.find({ isActive: true }).select('name');
+    const teams = await Team.find({ isActive: true }).select('name leaderEntersOverallCollection overallCollectedAmount');
     const teamRankings = await Promise.all(
       teams.map(async (t) => {
         const [d, c] = await Promise.all([
@@ -97,11 +97,16 @@ router.get('/admin', requireRole('super_admin', 'usthad'), async (req, res) => {
             { $group: { _id: null, total: { $sum: '$amount' } } }
           ])
         ]);
+        const collected = t.leaderEntersOverallCollection
+          ? (t.overallCollectedAmount || 0)
+          : (c[0] ? c[0].total : 0);
         return {
           _id: t._id,
           name: t.name,
+          leaderEntersOverallCollection: Boolean(t.leaderEntersOverallCollection),
+          overallCollectedAmount: t.overallCollectedAmount || 0,
           distributed: d[0] ? d[0].total : 0,
-          collected: c[0] ? c[0].total : 0
+          collected
         };
       })
     );
@@ -195,7 +200,9 @@ router.get('/team/:teamId', async (req, res) => {
     const teamAllocated = teamStock ? teamStock.quantity : 0;
     const memberAllocated = memberStockAgg[0] ? memberStockAgg[0].total : 0;
     const totalDistributed = distAgg[0] ? distAgg[0].total : 0;
-    const totalCollected = colAgg[0] ? colAgg[0].total : 0;
+    const totalCollected = team.leaderEntersOverallCollection
+      ? (team.overallCollectedAmount || 0)
+      : (colAgg[0] ? colAgg[0].total : 0);
     const confirmedTransfers = transferConfirmedAgg[0] ? transferConfirmedAgg[0].total : 0;
     const pendingTransfers = transferPendingAgg[0] ? transferPendingAgg[0].total : 0;
 
@@ -229,7 +236,14 @@ router.get('/team/:teamId', async (req, res) => {
     return res.json({
       success: true,
       data: {
-        team: { _id: team._id, name: team.name },
+        team: {
+          _id: team._id,
+          name: team.name,
+          leaderEntersOverallCollection: Boolean(team.leaderEntersOverallCollection),
+          overallCollectedAmount: team.overallCollectedAmount || 0,
+          overallCollectionNotes: team.overallCollectionNotes || '',
+          overallCollectionUpdatedAt: team.overallCollectionUpdatedAt || null
+        },
         stockAllocatedToTeam: teamAllocated,
         stockAllocatedToMembers: memberAllocated,
         unallocatedTeamStock: Math.max(0, teamAllocated - memberAllocated),

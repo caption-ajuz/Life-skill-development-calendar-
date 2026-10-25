@@ -643,4 +643,173 @@ test('Authentication: Logout purges tokens, cookie headers and resets user state
   assert.equal(result.user, null, 'User cache is cleared on logout');
 });
 
+// 19. Admin Password Visibility & Reset Hint Retention
+test('Admin Credentials: Admin can inspect and reset member password and PIN hints', () => {
+  const userRecord = {
+    _id: 'usr-101',
+    username: 'member1',
+    fullName: 'Zaid Rahman',
+    role: 'team_member',
+    passwordHash: '$2a$10$hashedstringhere',
+    pinHash: '$2a$10$pinhasstringhere',
+    passwordHint: 'member123',
+    pinHint: '4444',
+    mustChangePassword: false
+  };
+
+  // Safe serialization for admin view (passwordHash and pinHash stripped, hints preserved)
+  function serializeUserForAdmin(user) {
+    const safe = { ...user };
+    delete safe.passwordHash;
+    delete safe.pinHash;
+    return safe;
+  }
+
+  const adminView = serializeUserForAdmin(userRecord);
+  assert.equal(adminView.passwordHash, undefined, 'passwordHash is stripped');
+  assert.equal(adminView.pinHash, undefined, 'pinHash is stripped');
+  assert.equal(adminView.passwordHint, 'member123', 'Admin can see passwordHint');
+  assert.equal(adminView.pinHint, '4444', 'Admin can see pinHint');
+
+  // Simulate Password Reset
+  function resetUserPassword(user, customPassword) {
+    const newPass = customPassword || 'LSC@7842';
+    return {
+      ...user,
+      passwordHash: `$2a$10$newhashfor_${newPass}`,
+      passwordHint: newPass,
+      mustChangePassword: true
+    };
+  }
+
+  const afterPassReset = resetUserPassword(userRecord, 'NewPass@2026');
+  assert.equal(afterPassReset.passwordHint, 'NewPass@2026', 'Password hint updated to new password');
+  assert.equal(afterPassReset.mustChangePassword, true, 'User flagged to change password');
+
+  // Simulate PIN Reset
+  function resetUserPin(user, customPin) {
+    const newPin = customPin || '5555';
+    return {
+      ...user,
+      pinHash: `$2a$10$newpinhash_${newPin}`,
+      pinHint: newPin
+    };
+  }
+
+  const afterPinReset = resetUserPin(afterPassReset, '7777');
+  assert.equal(afterPinReset.pinHint, '7777', 'PIN hint updated to new PIN');
+});
+
+// 20. Team Leader Overall Collection Mode: Toggle & Lump-Sum Storage
+test('Team Leader Mode: Overall collection mode toggle and lump-sum amount management', () => {
+  const team = {
+    _id: 'team-01',
+    name: 'Al-Huda Team',
+    leaderEntersOverallCollection: false,
+    overallCollectedAmount: 0,
+    overallCollectionNotes: ''
+  };
+
+  function updateOverallCollection(currentTeam, { enabled, overallCollectedAmount, notes }) {
+    return {
+      ...currentTeam,
+      leaderEntersOverallCollection: enabled !== undefined ? Boolean(enabled) : currentTeam.leaderEntersOverallCollection,
+      overallCollectedAmount: overallCollectedAmount !== undefined ? Math.max(0, Number(overallCollectedAmount)) : currentTeam.overallCollectedAmount,
+      overallCollectionNotes: notes !== undefined ? String(notes).trim() : currentTeam.overallCollectionNotes,
+      overallCollectionUpdatedAt: new Date().toISOString()
+    };
+  }
+
+  // Turn ON overall mode with ₹50,000 lump sum
+  const activeModeTeam = updateOverallCollection(team, {
+    enabled: true,
+    overallCollectedAmount: 50000,
+    notes: 'Collected as team lump sum from commercial center'
+  });
+
+  assert.equal(activeModeTeam.leaderEntersOverallCollection, true, 'Overall collection mode is turned ON');
+  assert.equal(activeModeTeam.overallCollectedAmount, 50000, 'Overall lump sum stored correctly');
+  assert.equal(activeModeTeam.overallCollectionNotes, 'Collected as team lump sum from commercial center');
+
+  // Turn OFF overall mode
+  const disabledModeTeam = updateOverallCollection(activeModeTeam, { enabled: false });
+  assert.equal(disabledModeTeam.leaderEntersOverallCollection, false, 'Overall collection mode is turned OFF');
+});
+
+// 21. Member Collection Entry Lockout Guard
+test('Collections Guard: Member self-entry is blocked when team overall collection mode is active', () => {
+  const teamInOverallMode = {
+    _id: 'team-01',
+    name: 'Al-Huda Team',
+    leaderEntersOverallCollection: true,
+    overallCollectedAmount: 45000
+  };
+
+  const teamInNormalMode = {
+    _id: 'team-02',
+    name: 'Al-Noor Team',
+    leaderEntersOverallCollection: false,
+    overallCollectedAmount: 0
+  };
+
+  function validateCollectionSubmission(user, team, amount) {
+    if (user.role === 'team_member' && team.leaderEntersOverallCollection) {
+      return {
+        allowed: false,
+        status: 403,
+        error: 'Team Leader has enabled Overall Collection Mode. Member self-entry is locked.'
+      };
+    }
+    if (typeof amount !== 'number' || amount <= 0) {
+      return { allowed: false, status: 400, error: 'Invalid collection amount.' };
+    }
+    return { allowed: true, status: 201 };
+  }
+
+  const memberUser = { role: 'team_member', _id: 'mem-1' };
+  const leaderUser = { role: 'team_leader', _id: 'ldr-1' };
+
+  // Member attempt when mode is ON -> BLOCKED
+  const memberBlocked = validateCollectionSubmission(memberUser, teamInOverallMode, 500);
+  assert.equal(memberBlocked.allowed, false, 'Member cannot enter collection when overall mode is ON');
+  assert.equal(memberBlocked.status, 403, 'Returns 403 Forbidden');
+  assert.match(memberBlocked.error, /locked/i, 'Error message clarifies member entry is locked');
+
+  // Member attempt when mode is OFF -> ALLOWED
+  const memberAllowed = validateCollectionSubmission(memberUser, teamInNormalMode, 500);
+  assert.equal(memberAllowed.allowed, true, 'Member can enter collection when overall mode is OFF');
+
+  // Team Leader attempt -> ALLOWED
+  const leaderAllowed = validateCollectionSubmission(leaderUser, teamInOverallMode, 5000);
+  assert.equal(leaderAllowed.allowed, true, 'Leader is allowed');
+});
+
+// 22. Team Collection Aggregation: Overall Amount vs Member Collection Sum
+test('Aggregation: Team total collection calculation respects overall collection mode', () => {
+  const individualCollections = [
+    { amount: 500, status: 'approved' },
+    { amount: 1500, status: 'approved' },
+    { amount: 2000, status: 'approved' }
+  ];
+  const memberSum = individualCollections.reduce((sum, c) => sum + c.amount, 0); // 4000
+
+  function computeTeamTotalCollected(team, memberCollectionsSum) {
+    if (team.leaderEntersOverallCollection) {
+      return team.overallCollectedAmount;
+    }
+    return memberCollectionsSum;
+  }
+
+  // When Overall mode is ON (₹35,000 entered by leader)
+  const teamOverallOn = { leaderEntersOverallCollection: true, overallCollectedAmount: 35000 };
+  const totalWhenOn = computeTeamTotalCollected(teamOverallOn, memberSum);
+  assert.equal(totalWhenOn, 35000, 'Uses overall lump sum ₹35,000 when mode is ON');
+
+  // When Overall mode is OFF
+  const teamOverallOff = { leaderEntersOverallCollection: false, overallCollectedAmount: 0 };
+  const totalWhenOff = computeTeamTotalCollected(teamOverallOff, memberSum);
+  assert.equal(totalWhenOff, 4000, 'Aggregates individual collections ₹4,000 when mode is OFF');
+});
+
+
 

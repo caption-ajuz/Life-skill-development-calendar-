@@ -18,6 +18,29 @@ const teamSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
       index: true
+    },
+    leaderEntersOverallCollection: {
+      type: Boolean,
+      default: false,
+      index: true
+    },
+    overallCollectedAmount: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    overallCollectionNotes: {
+      type: String,
+      default: ''
+    },
+    overallCollectionUpdatedAt: {
+      type: Date,
+      default: null
+    },
+    overallCollectionUpdatedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null
     }
   },
   {

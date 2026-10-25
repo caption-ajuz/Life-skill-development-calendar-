@@ -54,6 +54,38 @@ export default function Members() {
   const [customTempPin, setCustomTempPin] = useState('');
   const [resettingPin, setResettingPin] = useState(false);
 
+  // Eye toggle for viewing passwords & PINs per user card
+  const [visiblePasswords, setVisiblePasswords] = useState({});
+  const [visiblePins, setVisiblePins] = useState({});
+
+  const toggleShowPassword = (id) => {
+    setVisiblePasswords((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const toggleShowPin = (id) => {
+    setVisiblePins((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const copyMemberCreds = async (m) => {
+    const lines = [
+      `*Life Skill Course — Login Credentials*`,
+      `• User: ${m.fullName}`,
+      `• Username: @${m.username}`,
+      `• Password: ${m.passwordHint || '(Temporary password not generated yet - Click Reset Pass)'}`,
+      m.pinHint ? `• Quick PIN: ${m.pinHint}` : null,
+      `• Role: ${m.role.replace('_', ' ')}`
+    ].filter(Boolean);
+
+    try {
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(lines.join('\n'));
+      }
+      if (window.showToast) window.showToast(`Login credentials for @${m.username} copied! ✓`, 'success');
+    } catch (_) {
+      if (window.showToast) window.showToast('Failed to copy to clipboard.', 'error');
+    }
+  };
+
   // Stock Allocation Modal
   const [selectedMember, setSelectedMember] = useState(null);
   const [allocQty, setAllocQty] = useState('');
@@ -189,15 +221,28 @@ export default function Members() {
         newPassword: customTempPass.trim() || undefined
       });
       if (res && res.success) {
+        const newPasswordValue = res.temporaryPassword || res.passwordHint || customTempPass.trim();
         setOneTimeCreds({
           username: resetPassUser.username,
-          temporaryPassword: res.temporaryPassword,
+          temporaryPassword: newPasswordValue,
           mustChangePassword: true,
           isReset: true
         });
+        // Immediately update local member card state
+        setMembers((prev) =>
+          prev.map((m) =>
+            m._id === resetPassUser._id
+              ? { ...m, passwordHint: newPasswordValue, mustChangePassword: true }
+              : m
+          )
+        );
+        // Automatically reveal password for admin to inspect
+        setVisiblePasswords((prev) => ({ ...prev, [resetPassUser._id]: true }));
+
+        const targetName = resetPassUser.fullName;
         setResetPassUser(null);
         setCustomTempPass('');
-        if (window.showToast) window.showToast('Temporary password generated! ✓', 'success');
+        if (window.showToast) window.showToast(`Temporary password generated for ${targetName}! ✓`, 'success');
         loadData();
       }
     } catch (err) {
@@ -218,14 +263,25 @@ export default function Members() {
         newPin: customTempPin.trim() || undefined
       });
       if (res && res.success) {
+        const newPinValue = res.temporaryPin || res.pinHint || customTempPin.trim();
         setOneTimeCreds({
           username: resetPinUser.username,
-          pin: res.temporaryPin,
+          pin: newPinValue,
           isPinReset: true
         });
+        // Immediately update local member card state
+        setMembers((prev) =>
+          prev.map((m) =>
+            m._id === resetPinUser._id ? { ...m, pinHint: newPinValue } : m
+          )
+        );
+        // Automatically reveal PIN for admin to inspect
+        setVisiblePins((prev) => ({ ...prev, [resetPinUser._id]: true }));
+
+        const targetName = resetPinUser.fullName;
         setResetPinUser(null);
         setCustomTempPin('');
-        if (window.showToast) window.showToast('Quick PIN reset successfully! ✓', 'success');
+        if (window.showToast) window.showToast(`PIN reset successfully for ${targetName}! ✓`, 'success');
         loadData();
       }
     } catch (err) {
@@ -773,6 +829,59 @@ export default function Members() {
                     👤 Profile
                   </a>
                 </div>
+
+                <!-- Admin & Leader Credentials Inspector (Show / Hide Password & PIN) -->
+                ${isSuperAdmin || isUsthad || isLeader ? html`
+                  <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 7px 10px; margin-bottom: 8px; font-size: 12px; display: flex; flex-direction: column; gap: 4px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                      <span style="color: #475569; font-weight: 600;">🔑 Password:</span>
+                      <div style="display: flex; align-items: center; gap: 6px;">
+                        <span style="font-family: monospace; font-size: 13px; font-weight: 700; color: #0f172a; letter-spacing: ${visiblePasswords[m._id] ? '0' : '2px'};">
+                          ${visiblePasswords[m._id]
+                            ? (m.passwordHint || '(Password not set)')
+                            : (m.passwordHint ? '••••••••' : '(Not set)')}
+                        </span>
+                        <button
+                          type="button"
+                          onClick=${() => toggleShowPassword(m._id)}
+                          style="background: #ffffff; border: 1px solid #cbd5e1; border-radius: 4px; padding: 2px 7px; font-size: 11px; cursor: pointer; color: #334155; font-weight: 600;"
+                          title="${visiblePasswords[m._id] ? 'Hide Password' : 'Show Password'}"
+                        >
+                          ${visiblePasswords[m._id] ? '🙈 Hide' : '👁️ Show'}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                      <span style="color: #475569; font-weight: 600;">🔢 4-Digit PIN:</span>
+                      <div style="display: flex; align-items: center; gap: 6px;">
+                        <span style="font-family: monospace; font-size: 13px; font-weight: 700; color: #0284c7; letter-spacing: ${visiblePins[m._id] ? '1px' : '3px'};">
+                          ${visiblePins[m._id]
+                            ? (m.pinHint || '(PIN not set)')
+                            : (m.pinHint ? '••••' : '(Not set)')}
+                        </span>
+                        <button
+                          type="button"
+                          onClick=${() => toggleShowPin(m._id)}
+                          style="background: #ffffff; border: 1px solid #cbd5e1; border-radius: 4px; padding: 2px 7px; font-size: 11px; cursor: pointer; color: #334155; font-weight: 600;"
+                          title="${visiblePins[m._id] ? 'Hide PIN' : 'Show PIN'}"
+                        >
+                          ${visiblePins[m._id] ? '🙈 Hide' : '👁️ Show'}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div style="display: flex; justify-content: flex-end; margin-top: 2px; padding-top: 3px; border-top: 1px dashed #e2e8f0;">
+                      <button
+                        type="button"
+                        onClick=${() => copyMemberCreds(m)}
+                        style="background: none; border: none; font-size: 11px; color: #0284c7; font-weight: 600; cursor: pointer; padding: 0;"
+                      >
+                        📋 Copy Login ID & Password
+                      </button>
+                    </div>
+                  </div>
+                ` : ''}
 
                 <!-- Secondary Row: Action Buttons for Admin & Leader -->
                 <div style="display: flex; flex-wrap: wrap; gap: 6px; padding-top: 8px; border-top: 1px solid #f1f5f9;">
