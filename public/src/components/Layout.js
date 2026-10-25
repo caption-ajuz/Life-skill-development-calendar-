@@ -1,5 +1,6 @@
-import { currentUser } from '../store/auth.js';
+import { currentUser, logout } from '../store/auth.js';
 import { syncStatus, syncAll } from '../services/sync.js';
+import { pwaState, promptInstall } from '../services/pwa.js';
 
 const html = window.html;
 const { useState, useEffect } = window.hooks;
@@ -77,12 +78,20 @@ export function Navbar({ title }) {
   const [checkingDb, setCheckingDb] = useState(false);
   const [longPressed, setLongPressed] = useState(false);
 
+  // PWA and Logout states
+  const [pwa, setPwa] = useState(() => pwaState.value);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [showIOSModal, setShowIOSModal] = useState(false);
+  const [installing, setInstalling] = useState(false);
+
   let pressTimer = null;
 
-  const fetchDbStatus = async () => {
+  const fetchDbStatus = async (isRetry = false) => {
     setCheckingDb(true);
     try {
-      const res = await fetch('/api/db-status');
+      const url = isRetry ? '/api/db-status/retry' : '/api/db-status';
+      const options = isRetry ? { method: 'POST' } : { method: 'GET' };
+      const res = await fetch(url, options);
       const data = await res.json();
       if (data && data.data) {
         setDbStatus(data.data);
@@ -101,11 +110,13 @@ export function Navbar({ title }) {
   useEffect(() => {
     const unsubUser = currentUser.subscribe ? currentUser.subscribe(setUser) : null;
     const unsubStatus = syncStatus.subscribe ? syncStatus.subscribe(setStatus) : null;
+    const unsubPwa = pwaState.subscribe ? pwaState.subscribe(setPwa) : null;
     fetchDbStatus();
     const interval = setInterval(fetchDbStatus, 30000);
     return () => {
       if (unsubUser) unsubUser();
       if (unsubStatus) unsubStatus();
+      if (unsubPwa) unsubPwa();
       clearInterval(interval);
     };
   }, []);
@@ -122,6 +133,24 @@ export function Navbar({ title }) {
     if (pressTimer) clearTimeout(pressTimer);
   };
 
+  const handleInstallClick = async () => {
+    setInstalling(true);
+    try {
+      const res = await promptInstall();
+      if (res && res.outcome === 'ios_guide') {
+        setShowIOSModal(true);
+      }
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  const handleConfirmLogout = async () => {
+    setShowLogoutConfirm(false);
+    if (window.showToast) window.showToast('Logged out successfully', 'info');
+    await logout();
+  };
+
   const getSyncDot = () => {
     if (!status.isOnline) return html`<span title="Offline" style="width: 10px; height: 10px; border-radius: 50%; background: #fbbf24; display: inline-block;"></span>`;
     if (status.isSyncing) return html`<span title="Syncing" style="width: 10px; height: 10px; border-radius: 50%; background: #60a5fa; display: inline-block; animation: spin 1s infinite;"></span>`;
@@ -133,7 +162,7 @@ export function Navbar({ title }) {
     <nav class="navbar">
       <img src="/logo.jpg" alt="Logo" class="navbar-logo" />
       <div class="navbar-title">${title || 'Life Skill Course'}</div>
-      <div style="display: flex; align-items: center; gap: 8px;">
+      <div style="display: flex; align-items: center; gap: 7px;">
         <!-- Database Connection Indicator Dot -->
         <button
           type="button"
@@ -144,7 +173,7 @@ export function Navbar({ title }) {
           onTouchStart=${handlePressStart}
           onTouchEnd=${handlePressEnd}
           onClick=${() => setShowDbModal(true)}
-          style="display: flex; align-items: center; gap: 5px; padding: 4px 7px; border-radius: 12px; background: rgba(0,0,0,0.25); border: none; cursor: pointer;"
+          style="display: flex; align-items: center; gap: 4px; padding: 4px 7px; border-radius: 12px; background: rgba(0,0,0,0.25); border: none; cursor: pointer;"
         >
           <span
             style="width: 9px; height: 9px; border-radius: 50%; background: ${dbStatus.connected ? '#10b981' : '#ef4444'}; display: inline-block; box-shadow: 0 0 6px ${dbStatus.connected ? '#10b981' : '#ef4444'};"
@@ -153,6 +182,25 @@ export function Navbar({ title }) {
             ${dbStatus.connected ? 'DB' : 'DB'}
           </span>
         </button>
+
+        <!-- PWA Install Button (hides automatically if already running in standalone PWA mode) -->
+        ${!pwa.isInstalled
+          ? html`
+              <button
+                type="button"
+                class="navbar-btn"
+                title="Install Life Skill App"
+                onClick=${handleInstallClick}
+                disabled=${installing}
+                style="display: flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 12px; background: rgba(255,255,255,0.22); border: 1px solid rgba(255,255,255,0.4); color: white; cursor: pointer;"
+              >
+                <svg style="width: 14px; height: 14px;" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.3">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                </svg>
+                <span style="font-size: 11px; font-weight: 700;">Install</span>
+              </button>
+            `
+          : ''}
 
         <!-- Sync Button -->
         <button class="navbar-btn" onClick=${() => syncAll()} title="Sync Status" style="font-size: 13px; display: flex; align-items: center; gap: 6px;">
@@ -166,6 +214,19 @@ export function Navbar({ title }) {
             ${user && user.profilePhoto ? html`<img src="${user.profilePhoto}" alt="Avatar" />` : (user ? user.fullName.charAt(0).toUpperCase() : 'U')}
           </div>
         </a>
+
+        <!-- Logout Button -->
+        <button
+          type="button"
+          class="navbar-btn"
+          title="Log Out"
+          onClick=${() => setShowLogoutConfirm(true)}
+          style="display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 8px; background: rgba(239, 68, 68, 0.28); border: 1px solid rgba(239, 68, 68, 0.5); color: #fee2e2; cursor: pointer;"
+        >
+          <svg style="width: 17px; height: 17px;" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path>
+          </svg>
+        </button>
       </div>
     </nav>
 
@@ -224,11 +285,11 @@ export function Navbar({ title }) {
                 <button
                   type="button"
                   class="btn btn-secondary"
-                  onClick=${fetchDbStatus}
+                  onClick=${() => fetchDbStatus(true)}
                   disabled=${checkingDb}
                   style="padding: 8px 14px; font-size: 13px;"
                 >
-                  ${checkingDb ? 'Testing...' : '🔄 Check Connection'}
+                  ${checkingDb ? 'Testing Connection...' : '🔄 Retry Connection'}
                 </button>
                 <button
                   type="button"
@@ -239,6 +300,86 @@ export function Navbar({ title }) {
                   Close
                 </button>
               </div>
+            </div>
+          </div>
+        `
+      : ''}
+
+    <!-- Logout Confirmation Modal -->
+    ${showLogoutConfirm
+      ? html`
+          <div class="modal-overlay" onClick=${() => setShowLogoutConfirm(false)}>
+            <div class="modal" onClick=${(e) => e.stopPropagation()} style="max-width: 380px; padding: 22px; text-align: center;">
+              <div
+                style="width: 52px; height: 52px; border-radius: 50%; background: #fee2e2; color: #dc2626; display: flex; align-items: center; justify-content: center; margin: 0 auto 14px;"
+              >
+                <svg style="width: 28px; height: 28px;" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path>
+                </svg>
+              </div>
+              <h3 style="font-size: 18px; font-weight: 700; color: var(--text); margin-bottom: 6px;">
+                Confirm Sign Out
+              </h3>
+              <p style="font-size: 13.5px; color: var(--text-secondary); margin-bottom: 20px; line-height: 1.5;">
+                Are you sure you want to log out from <b>${user ? user.fullName : 'Life Skill Course'}</b>?
+              </p>
+              <div style="display: flex; gap: 10px; justify-content: center;">
+                <button
+                  type="button"
+                  class="btn btn-secondary"
+                  onClick=${() => setShowLogoutConfirm(false)}
+                  style="flex: 1;"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-danger"
+                  onClick=${handleConfirmLogout}
+                  style="flex: 1;"
+                >
+                  Log Out
+                </button>
+              </div>
+            </div>
+          </div>
+        `
+      : ''}
+
+    <!-- iOS Safari PWA Install Instructions Modal -->
+    ${showIOSModal
+      ? html`
+          <div class="modal-overlay" onClick=${() => setShowIOSModal(false)}>
+            <div class="modal" onClick=${(e) => e.stopPropagation()} style="max-width: 400px; padding: 22px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
+                <h3 style="font-size: 17px; font-weight: 700; color: var(--text); margin: 0;">
+                  Install on iPhone / iPad
+                </h3>
+                <button
+                  onClick=${() => setShowIOSModal(false)}
+                  style="background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text-light);"
+                >
+                  ✕
+                </button>
+              </div>
+              <div style="font-size: 14px; line-height: 1.6; color: var(--text); margin-bottom: 18px;">
+                <p style="margin-bottom: 10px;">To install <b>Life Skill Course</b> as a standalone mobile app on iOS:</p>
+                <ol style="padding-left: 20px; margin-bottom: 12px;">
+                  <li style="margin-bottom: 6px;">Tap the <b>Share</b> button in the Safari bottom toolbar.</li>
+                  <li style="margin-bottom: 6px;">Scroll down and select <b>Add to Home Screen</b>.</li>
+                  <li>Tap <b>Add</b> in the top right corner.</li>
+                </ol>
+                <div style="font-size: 12.5px; color: #0284c7; background: #e0f2fe; padding: 8px 12px; border-radius: 8px;">
+                  ✓ The app will launch without browser address bars and support offline camp entries!
+                </div>
+              </div>
+              <button
+                type="button"
+                class="btn btn-primary btn-full"
+                onClick=${() => setShowIOSModal(false)}
+              >
+                Got It
+              </button>
             </div>
           </div>
         `

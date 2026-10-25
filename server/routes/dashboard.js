@@ -41,11 +41,11 @@ router.get('/admin', requireRole('super_admin', 'usthad'), async (req, res) => {
       Team.countDocuments({ isActive: true }),
       User.countDocuments({ isActive: true, role: { $in: ['team_leader', 'team_member'] } }),
       Distribution.aggregate([
-        { $match: { status: 'active' } },
+        { $match: { $or: [{ status: 'active' }, { status: 'approved' }, { approvalStatus: 'approved' }] } },
         { $group: { _id: null, totalQty: { $sum: '$quantity' } } }
       ]),
       Collection.aggregate([
-        { $match: { status: 'active' } },
+        { $match: { $or: [{ status: 'active' }, { status: 'approved' }, { approvalStatus: 'approved' }] } },
         { $group: { _id: null, totalAmt: { $sum: '$amount' } } }
       ]),
       MoneyTransfer.aggregate([
@@ -89,11 +89,11 @@ router.get('/admin', requireRole('super_admin', 'usthad'), async (req, res) => {
       teams.map(async (t) => {
         const [d, c] = await Promise.all([
           Distribution.aggregate([
-            { $match: { teamId: t._id, status: 'active' } },
+            { $match: { teamId: t._id, $or: [{ status: 'active' }, { status: 'approved' }, { approvalStatus: 'approved' }] } },
             { $group: { _id: null, total: { $sum: '$quantity' } } }
           ]),
           Collection.aggregate([
-            { $match: { teamId: t._id, status: 'active' } },
+            { $match: { teamId: t._id, $or: [{ status: 'active' }, { status: 'approved' }, { approvalStatus: 'approved' }] } },
             { $group: { _id: null, total: { $sum: '$amount' } } }
           ])
         ]);

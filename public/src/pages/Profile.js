@@ -1,7 +1,8 @@
 import api from '../services/api.js';
-import { currentUser } from '../store/auth.js';
+import { currentUser, logout } from '../store/auth.js';
 import { formatCurrency, formatDate, formatNumber } from '../utils/format.js';
 import { compressImage } from '../utils/image.js';
+import { pwaState, promptInstall } from '../services/pwa.js';
 
 const html = window.html;
 const { useState, useEffect } = window.hooks;
@@ -53,6 +54,28 @@ export default function Profile() {
 
   const [newPin, setNewPin] = useState('');
   const [savingPin, setSavingPin] = useState(false);
+
+  // PWA & Logout states
+  const [pwa, setPwa] = useState(() => pwaState.value);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [showIOSModal, setShowIOSModal] = useState(false);
+
+  useEffect(() => {
+    return pwaState.subscribe ? pwaState.subscribe(setPwa) : undefined;
+  }, []);
+
+  const handlePwaInstall = async () => {
+    const res = await promptInstall();
+    if (res && res.outcome === 'ios_guide') {
+      setShowIOSModal(true);
+    }
+  };
+
+  const handleConfirmLogout = async () => {
+    setShowLogoutConfirm(false);
+    if (window.showToast) window.showToast('Logged out successfully', 'info');
+    await logout();
+  };
 
   const loadProfile = async () => {
     if (!targetUserId) return;
@@ -611,6 +634,48 @@ export default function Profile() {
             </button>
           </form>
         </div>
+
+        <!-- PWA Installation Card -->
+        <div class="card" style="border: 1.5px solid #0891b2; background: linear-gradient(to bottom, #ffffff, #f0fdfa);">
+          <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+            <img src="/logo.jpg" alt="Logo" style="width: 44px; height: 44px; border-radius: 10px; border: 1px solid #e2e8f0; object-fit: contain; background: white; padding: 2px;" />
+            <div>
+              <div style="font-size: 15px; font-weight: 700; color: #0f172a;">Progressive Web App (PWA)</div>
+              <div style="font-size: 12px; color: #0891b2; font-weight: 600;">Offline Ready · Instant Launch</div>
+            </div>
+          </div>
+          <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 14px; line-height: 1.4;">
+            Install <b>Life Skill Course</b> directly onto your home screen for fast full-screen performance without opening a browser.
+          </p>
+          <button
+            type="button"
+            class="btn btn-primary btn-full"
+            onClick=${handlePwaInstall}
+            disabled=${pwa.isInstalled}
+            style="background: linear-gradient(135deg, #0891b2, #1d4ed8);"
+          >
+            ${pwa.isInstalled ? '✓ App Already Installed as PWA' : '📲 Install Mobile App'}
+          </button>
+        </div>
+
+        <!-- Sign Out Card -->
+        <div class="card" style="border: 1.5px solid #fecaca; background: #fffaf0;">
+          <div class="card-title" style="color: #dc2626;">Session Management</div>
+          <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 14px;">
+            Signed in as <b>${u.fullName}</b> (@${u.username}) · Role: <span style="text-transform: capitalize;">${u.role.replace('_', ' ')}</span>
+          </p>
+          <button
+            type="button"
+            class="btn btn-danger btn-full"
+            onClick=${() => setShowLogoutConfirm(true)}
+            style="display: flex; align-items: center; justify-content: center; gap: 8px;"
+          >
+            <svg style="width: 18px; height: 18px;" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path>
+            </svg>
+            Log Out from Account
+          </button>
+        </div>
       `}
 
       <!-- Record Income / Collection Modal -->
@@ -714,6 +779,59 @@ export default function Profile() {
                 ${savingExpense ? 'Saving...' : 'Record Expense'}
               </button>
             </form>
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- Logout Confirmation Modal -->
+      ${showLogoutConfirm ? html`
+        <div class="modal-overlay" onClick=${() => setShowLogoutConfirm(false)}>
+          <div class="modal" onClick=${(e) => e.stopPropagation()} style="max-width: 380px; padding: 22px; text-align: center;">
+            <div style="width: 52px; height: 52px; border-radius: 50%; background: #fee2e2; color: #dc2626; display: flex; align-items: center; justify-content: center; margin: 0 auto 14px;">
+              <svg style="width: 28px; height: 28px;" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path>
+              </svg>
+            </div>
+            <h3 style="font-size: 18px; font-weight: 700; color: var(--text); margin-bottom: 6px;">
+              Confirm Sign Out
+            </h3>
+            <p style="font-size: 13.5px; color: var(--text-secondary); margin-bottom: 20px; line-height: 1.5;">
+              Are you sure you want to log out from <b>${loggedInUser ? loggedInUser.fullName : 'Life Skill Course'}</b>?
+            </p>
+            <div style="display: flex; gap: 10px; justify-content: center;">
+              <button type="button" class="btn btn-secondary" onClick=${() => setShowLogoutConfirm(false)} style="flex: 1;">
+                Cancel
+              </button>
+              <button type="button" class="btn btn-danger" onClick=${handleConfirmLogout} style="flex: 1;">
+                Log Out
+              </button>
+            </div>
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- iOS Safari PWA Install Modal -->
+      ${showIOSModal ? html`
+        <div class="modal-overlay" onClick=${() => setShowIOSModal(false)}>
+          <div class="modal" onClick=${(e) => e.stopPropagation()} style="max-width: 400px; padding: 22px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
+              <h3 style="font-size: 17px; font-weight: 700; color: var(--text); margin: 0;">Install on iPhone / iPad</h3>
+              <button onClick=${() => setShowIOSModal(false)} style="background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text-light);">✕</button>
+            </div>
+            <div style="font-size: 14px; line-height: 1.6; color: var(--text); margin-bottom: 18px;">
+              <p style="margin-bottom: 10px;">To install <b>Life Skill Course</b> as a standalone mobile app on iOS:</p>
+              <ol style="padding-left: 20px; margin-bottom: 12px;">
+                <li style="margin-bottom: 6px;">Tap the <b>Share</b> button in Safari bottom bar.</li>
+                <li style="margin-bottom: 6px;">Scroll down and tap <b>Add to Home Screen</b>.</li>
+                <li>Tap <b>Add</b> in the top right corner.</li>
+              </ol>
+              <div style="font-size: 12.5px; color: #0284c7; background: #e0f2fe; padding: 8px 12px; border-radius: 8px;">
+                ✓ The app will launch without browser address bars and support offline camp entries!
+              </div>
+            </div>
+            <button type="button" class="btn btn-primary btn-full" onClick=${() => setShowIOSModal(false)}>
+              Got It
+            </button>
           </div>
         </div>
       ` : ''}

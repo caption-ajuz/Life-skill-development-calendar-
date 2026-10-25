@@ -21,19 +21,24 @@ export default function Dashboard() {
     if (!user) return;
     try {
       if (['super_admin', 'usthad'].includes(user.role)) {
-        const [dashRes, corrRes] = await Promise.all([
+        const [dashResult, corrResult] = await Promise.allSettled([
           api.get('/api/dashboard/admin'),
           api.get('/api/corrections?status=pending')
         ]);
-        if (dashRes && dashRes.success) {
-          setData(dashRes.data);
-          setCfgStock(dashRes.data.totalStock || 5000);
-          setCfgPrice(dashRes.data.calendarPrice || 100);
-          setCfgInvest(dashRes.data.initialInvestment || 20000);
-          setCfgPrint(dashRes.data.printingCost || 50000);
+
+        if (dashResult.status === 'fulfilled' && dashResult.value && dashResult.value.success) {
+          const dashData = dashResult.value.data;
+          setData(dashData);
+          setCfgStock(dashData.totalStock || 5000);
+          setCfgPrice(dashData.calendarPrice || 100);
+          setCfgInvest(dashData.initialInvestment || 20000);
+          setCfgPrint(dashData.printingCost || 50000);
+        } else if (dashResult.status === 'rejected') {
+          console.warn('Admin dashboard fetch rejected:', dashResult.reason);
         }
-        if (corrRes && corrRes.success) {
-          setCorrections((corrRes.data && corrRes.data.corrections) || []);
+
+        if (corrResult.status === 'fulfilled' && corrResult.value && corrResult.value.success) {
+          setCorrections((corrResult.value.data && corrResult.value.data.corrections) || []);
         }
       } else if (user.role === 'team_leader') {
         const teamId = user.teamId ? (user.teamId._id || user.teamId) : null;

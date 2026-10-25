@@ -1,20 +1,36 @@
-// Service Worker v6.0 - Life Skill Course PWA (Network-first for code, Offline-ready fallback)
-const CACHE_VERSION = 'lsc-v6';
+// Service Worker v7.0 - Life Skill Course PWA (Network-first for code, full offline app shell)
+const CACHE_VERSION = 'lsc-v7';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const API_CACHE = `${CACHE_VERSION}-api`;
 
-// App shell files to pre-cache for offline support
+// App shell files to pre-cache for complete offline support
 const APP_SHELL = [
   '/',
   '/index.html',
-  '/logo.jpg',
   '/manifest.json',
+  '/logo.jpg',
+  '/icon.svg',
+  '/pwa-192x192.png',
+  '/pwa-512x512.png',
+  '/pwa-maskable-512x512.png',
+  '/apple-touch-icon.png',
   '/vendor/preact-htm.js',
   '/src/index.js',
   '/src/app.js',
   '/src/components/Layout.js',
   '/src/pages/Login.js',
   '/src/pages/Dashboard.js',
+  '/src/pages/Teams.js',
+  '/src/pages/Members.js',
+  '/src/pages/Stock.js',
+  '/src/pages/Distribution.js',
+  '/src/pages/Collections.js',
+  '/src/pages/Transfers.js',
+  '/src/pages/Areas.js',
+  '/src/pages/Reports.js',
+  '/src/pages/Finance.js',
+  '/src/pages/Profile.js',
+  '/src/pages/Settings.js',
   '/src/store/auth.js',
   '/src/services/api.js',
   '/src/services/db.js',
@@ -34,14 +50,16 @@ self.addEventListener('install', (event) => {
             .then((res) => {
               if (res.ok) return cache.put(url, res);
             })
-            .catch(() => {})
+            .catch((err) => {
+              console.warn('Precache miss:', url, err.message);
+            })
         )
       );
     })
   );
 });
 
-// Activate - purge all older caches (including lsc-v2) and refresh any stale clients
+// Activate - purge all older caches and refresh clients
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then(async (keys) => {
@@ -55,9 +73,6 @@ self.addEventListener('activate', (event) => {
         const windowClients = await self.clients.matchAll({ type: 'window' });
         for (const client of windowClients) {
           client.postMessage({ type: 'SW_CACHE_UPGRADED', version: CACHE_VERSION });
-          if ('navigate' in client) {
-            client.navigate(client.url).catch(() => {});
-          }
         }
       }
     })
@@ -76,6 +91,10 @@ self.addEventListener('fetch', (event) => {
 
   // API requests - network first with cached fallback for offline mode
   if (url.pathname.startsWith('/api/')) {
+    // Don't cache login, logout or health check
+    if (url.pathname.includes('/auth/login') || url.pathname.includes('/auth/logout') || url.pathname.includes('/health')) {
+      return;
+    }
     event.respondWith(
       caches.open(API_CACHE).then((cache) => {
         return fetch(request)
@@ -89,7 +108,7 @@ self.addEventListener('fetch', (event) => {
             return cache.match(request).then((cached) => {
               if (cached) return cached;
               return new Response(
-                JSON.stringify({ success: false, error: 'Offline - no cached data' }),
+                JSON.stringify({ success: false, error: 'Offline - local cache active' }),
                 { status: 503, headers: { 'Content-Type': 'application/json' } }
               );
             });
@@ -99,7 +118,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Same-origin requests: Network-first for HTML & JS so updates always show immediately
+  // Same-origin static requests: Network-first for code/HTML, Cache-first for images
   if (url.origin === location.origin) {
     const isCodeOrHtml =
       url.pathname === '/' ||
@@ -137,7 +156,7 @@ self.addEventListener('fetch', (event) => {
       caches.match(request).then((cached) => {
         if (cached) return cached;
         return fetch(request).then((response) => {
-          if (response.ok && url.pathname.match(/\.(css|jpg|jpeg|png|svg|woff2?)$/)) {
+          if (response.ok && url.pathname.match(/\.(css|jpg|jpeg|png|svg|ico|woff2?)$/)) {
             const responseClone = response.clone();
             caches.open(STATIC_CACHE).then((cache) => {
               cache.put(request, responseClone);

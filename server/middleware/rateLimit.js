@@ -5,6 +5,7 @@ export const loginLimiter = rateLimit({
   max: 6, // 6 attempts per minute
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
   message: {
     success: false,
     error: 'Too many login attempts. Please wait a minute and try again.'
@@ -16,6 +17,7 @@ export const apiLimiter = rateLimit({
   max: 300, // 300 requests per minute
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
   message: {
     success: false,
     error: 'Too many requests. Please slow down.'

@@ -1,13 +1,39 @@
 {
-  "name": "Life Skill Course",
+  "id": "/",
+  "name": "Life Skill Course — Calendar Camp",
   "short_name": "Life Skill",
-  "description": "Calendar Camp Management - Markazul Hidayathil Islamiyya",
+  "description": "Calendar Camp Management Portal for Markazul Hidayathil Islamiyya",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#f8fafc",
-  "theme_color": "#0891b2",
   "orientation": "portrait-primary",
+  "background_color": "#ffffff",
+  "theme_color": "#0891b2",
+  "categories": ["productivity", "finance", "education"],
   "icons": [
-    { "src": "/logo.jpg", "sizes": "512x512", "type": "image/jpeg", "purpose": "any" }
+    {
+      "src": "/pwa-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
   ]
 }

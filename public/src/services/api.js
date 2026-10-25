@@ -1,6 +1,54 @@
-// API client with fetch, timeout, auth handling
+// API client with fetch, timeout, robust token auth handling, and offline fallback
 
 const TIMEOUT = 15000;
+const TOKEN_KEY = 'lsc_auth_token';
+const USER_KEY = 'lsc_auth_user';
+
+export function getStoredToken() {
+  try {
+    return localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY) || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+export function setStoredToken(token) {
+  try {
+    if (token) {
+      localStorage.setItem(TOKEN_KEY, token);
+      sessionStorage.setItem(TOKEN_KEY, token);
+    } else {
+      localStorage.removeItem(TOKEN_KEY);
+      sessionStorage.removeItem(TOKEN_KEY);
+    }
+  } catch (_) {}
+}
+
+export function getStoredUser() {
+  try {
+    const raw = localStorage.getItem(USER_KEY) || sessionStorage.getItem(USER_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+export function setStoredUser(user) {
+  try {
+    if (user) {
+      localStorage.setItem(USER_KEY, JSON.stringify(user));
+      sessionStorage.setItem(USER_KEY, JSON.stringify(user));
+    } else {
+      localStorage.removeItem(USER_KEY);
+      sessionStorage.removeItem(USER_KEY);
+    }
+  } catch (_) {}
+}
+
+export function clearStoredAuth() {
+  setStoredToken(null);
+  setStoredUser(null);
+}
 
 async function request(method, url, data, params) {
   const controller = new AbortController();
@@ -19,10 +67,16 @@ async function request(method, url, data, params) {
 
     const opts = {
       method,
-      credentials: 'same-origin',
+      credentials: 'include',
       signal: controller.signal,
       headers: {}
     };
+
+    // Attach Bearer token for iframe/PWA/cross-site compatibility
+    const token = getStoredToken();
+    if (token) {
+      opts.headers['Authorization'] = `Bearer ${token}`;
+    }
 
     if (data && (method === 'POST' || method === 'PUT')) {
       opts.headers['Content-Type'] = 'application/json';
@@ -32,15 +86,18 @@ async function request(method, url, data, params) {
     const res = await fetch(fullUrl, opts);
 
     if (res.status === 401) {
+      clearStoredAuth();
       if (url.includes('/api/auth/me')) {
         return { success: false, data: null };
       }
-      // Clear auth state and redirect
+      // Clear auth state and redirect to login if not already there
       const { signals } = await import('../store/auth.js');
       if (signals && signals.currentUser) {
         signals.currentUser.value = null;
       }
-      window.location.hash = '#/login';
+      if (window.location.hash !== '#/login') {
+        window.location.hash = '#/login';
+      }
       throw new Error('Session expired. Please log in again.');
     }
 

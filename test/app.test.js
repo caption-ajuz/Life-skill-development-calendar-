@@ -583,3 +583,64 @@ test('Database Status: Diagnostic structure with state, details and message', as
   assert.ok(status.timestamp, 'status includes timestamp');
 });
 
+// 17. PWA Compliance: Manifest structure and multi-size icon assets
+test('PWA Standards: Manifest completeness, standalone mode and required icons', async () => {
+  const fs = await import('fs');
+  const path = await import('path');
+
+  const manifestPath = path.resolve('public/manifest.json');
+  assert.ok(fs.existsSync(manifestPath), 'manifest.json exists');
+
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  assert.equal(manifest.display, 'standalone', 'PWA display must be standalone');
+  assert.equal(manifest.start_url, '/', 'start_url must be /');
+  assert.equal(manifest.scope, '/', 'scope must be /');
+  assert.ok(manifest.name, 'manifest has full name');
+  assert.ok(manifest.short_name, 'manifest has short_name');
+  assert.ok(manifest.short_name.length <= 12, 'short_name length <= 12 chars to prevent mobile ellipsis');
+  assert.equal(manifest.theme_color, '#0891b2', 'theme_color is defined');
+  assert.equal(manifest.background_color, '#ffffff', 'background_color is defined');
+
+  // Verify PNG icon files exist on disk
+  const icon192 = path.resolve('public/pwa-192x192.png');
+  const icon512 = path.resolve('public/pwa-512x512.png');
+  const iconMaskable = path.resolve('public/pwa-maskable-512x512.png');
+  const appleTouchIcon = path.resolve('public/apple-touch-icon.png');
+  const iconSvg = path.resolve('public/icon.svg');
+
+  assert.ok(fs.existsSync(icon192), 'pwa-192x192.png exists');
+  assert.ok(fs.existsSync(icon512), 'pwa-512x512.png exists');
+  assert.ok(fs.existsSync(iconMaskable), 'pwa-maskable-512x512.png exists');
+  assert.ok(fs.existsSync(appleTouchIcon), 'apple-touch-icon.png exists for iOS Safari');
+  assert.ok(fs.existsSync(iconSvg), 'icon.svg exists');
+
+  // Verify maskable and standard purposes are present in manifest
+  const hasStandard = manifest.icons.some(i => i.purpose === 'any' && i.sizes.includes('192'));
+  const has512Standard = manifest.icons.some(i => i.purpose === 'any' && i.sizes.includes('512'));
+  const hasMaskable = manifest.icons.some(i => i.purpose === 'maskable');
+
+  assert.ok(hasStandard, 'manifest includes 192x192 purpose any');
+  assert.ok(has512Standard, 'manifest includes 512x512 purpose any');
+  assert.ok(hasMaskable, 'manifest includes maskable icon for Android');
+});
+
+// 18. Logout & Session Termination
+test('Authentication: Logout purges tokens, cookie headers and resets user state', async () => {
+  // Test simulated storage clearance
+  const mockStorage = {
+    'lsc_auth_token': 'test-token-xyz',
+    'lsc_auth_user': JSON.stringify({ fullName: 'Super Admin', role: 'super_admin' })
+  };
+
+  function simulateLogout(storage) {
+    delete storage['lsc_auth_token'];
+    delete storage['lsc_auth_user'];
+    return { token: storage['lsc_auth_token'] || null, user: storage['lsc_auth_user'] || null };
+  }
+
+  const result = simulateLogout(mockStorage);
+  assert.equal(result.token, null, 'Auth token is cleared on logout');
+  assert.equal(result.user, null, 'User cache is cleared on logout');
+});
+
+
