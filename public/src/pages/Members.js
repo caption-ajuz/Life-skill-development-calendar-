@@ -42,13 +42,19 @@ export default function Members() {
   const [oneTimeCreds, setOneTimeCreds] = useState(null);
   const [copiedCreds, setCopiedCreds] = useState(false);
 
-  // Edit User Modal (Name, Phone, Role, Team)
+  // Edit User Modal (Name, Phone, Role, Team, Collection Target)
   const [editingUser, setEditingUser] = useState(null);
   const [editFullName, setEditFullName] = useState('');
   const [editPhone, setEditPhone] = useState('');
   const [editRole, setEditRole] = useState('team_member');
   const [editTeamId, setEditTeamId] = useState('');
+  const [editCollectionTarget, setEditCollectionTarget] = useState(25000);
   const [savingEdit, setSavingEdit] = useState(false);
+
+  // Overall Member Target Modal State
+  const [showOverallTargetModal, setShowOverallTargetModal] = useState(false);
+  const [overallTargetAmount, setOverallTargetAmount] = useState(25000);
+  const [savingOverallTarget, setSavingOverallTarget] = useState(false);
 
   // Reset Password Modal
   const [resetPassUser, setResetPassUser] = useState(null);
@@ -230,6 +236,7 @@ export default function Members() {
     setEditPhone(m.phone || '');
     setEditRole(m.role || 'team_member');
     setEditTeamId(m.teamId ? (m.teamId._id || m.teamId) : '');
+    setEditCollectionTarget(m.collectionTarget !== undefined && m.collectionTarget !== null ? m.collectionTarget : 25000);
   };
 
   const handleSaveEditUser = async (e) => {
@@ -245,6 +252,7 @@ export default function Members() {
       if (isSuperAdmin) {
         payload.role = editRole;
         payload.teamId = editTeamId || null;
+        payload.collectionTarget = parseFloat(editCollectionTarget) || 0;
       }
       const res = await api.put(`/api/users/${editingUser._id}`, payload);
       if (res && res.success) {
@@ -256,6 +264,28 @@ export default function Members() {
       if (window.showToast) window.showToast(err.message || 'Failed to update account.', 'error');
     } finally {
       setSavingEdit(false);
+    }
+  };
+
+  const handleSaveOverallTarget = async (e) => {
+    e.preventDefault();
+    const amt = parseFloat(overallTargetAmount);
+    if (isNaN(amt) || amt < 0) {
+      if (window.showToast) window.showToast('Please enter a valid positive target amount.', 'error');
+      return;
+    }
+    setSavingOverallTarget(true);
+    try {
+      const res = await api.post('/api/users/batch-target', { targetAmount: amt });
+      if (res && res.success) {
+        if (window.showToast) window.showToast(`Updated collection target for ${res.modifiedCount || 'all'} members to ₹${amt.toLocaleString('en-IN')}! ✓`, 'success');
+        setShowOverallTargetModal(false);
+        loadData();
+      }
+    } catch (err) {
+      if (window.showToast) window.showToast(err.message || 'Failed to update member targets.', 'error');
+    } finally {
+      setSavingOverallTarget(false);
     }
   };
 
@@ -360,16 +390,21 @@ export default function Members() {
   const handleAllocateMember = async (e) => {
     e.preventDefault();
     const qty = parseInt(allocQty, 10);
-    if (isNaN(qty) || qty < 0) return;
+    if (isNaN(qty) || qty <= 0) {
+      if (window.showToast) window.showToast('Please enter a valid quantity greater than 0.', 'error');
+      return;
+    }
 
     setAllocating(true);
+    const clientId = 'member-alloc-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
     try {
       await api.post('/api/stock/allocate-member', {
         memberId: selectedMember._id,
-        quantity: qty
+        quantity: qty,
+        clientId
       });
 
-      if (window.showToast) window.showToast(`Allocated ${qty} calendars to ${selectedMember.fullName}`, 'success');
+      if (window.showToast) window.showToast(`✓ Successfully allocated ${qty} calendars to ${selectedMember.fullName}!`, 'success');
       setSelectedMember(null);
       setAllocQty('');
       loadData();
@@ -437,16 +472,29 @@ export default function Members() {
           </p>
         </div>
 
-        ${isSuperAdmin || isLeader ? html`
-          <button
-            class="btn btn-primary btn-sm"
-            style="font-weight: 700; display: flex; align-items: center; gap: 4px;"
-            onClick=${() => setShowAddUser(true)}
-          >
-            <span>+</span>
-            <span>${isLeader ? 'Add Member' : 'New User'}</span>
-          </button>
-        ` : ''}
+        <div style="display: flex; gap: 8px;">
+          ${isSuperAdmin ? html`
+            <button
+              class="btn btn-secondary btn-sm"
+              style="font-weight: 700; display: flex; align-items: center; gap: 4px; border-color: #10b981; color: #047857; background: #ecfdf5;"
+              onClick=${() => setShowOverallTargetModal(true)}
+              title="Set Overall Target for all members"
+            >
+              <span>🎯 Overall Target</span>
+            </button>
+          ` : ''}
+
+          ${isSuperAdmin || isLeader ? html`
+            <button
+              class="btn btn-primary btn-sm"
+              style="font-weight: 700; display: flex; align-items: center; gap: 4px;"
+              onClick=${() => setShowAddUser(true)}
+            >
+              <span>+</span>
+              <span>${isLeader ? 'Add Member' : 'New User'}</span>
+            </button>
+          ` : ''}
+        </div>
       </div>
 
       <!-- Filters & Search Bar -->
@@ -744,11 +792,65 @@ export default function Members() {
                     </select>
                   </div>
                 </div>
+
+                <div class="form-group">
+                  <label class="form-label">Individual Collection Target (₹)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="500"
+                    class="form-input"
+                    value=${editCollectionTarget}
+                    onInput=${(e) => setEditCollectionTarget(e.target.value)}
+                    placeholder="e.g. 25000"
+                    style="font-size: 16px; font-weight: 700; color: #047857;"
+                  />
+                  <div style="font-size: 11px; color: var(--text-secondary); margin-top: 2px;">
+                    Personal collection target for this member. Updates member & leader dashboards and WhatsApp target report.
+                  </div>
+                </div>
               ` : ''}
 
               <button type="submit" class="btn btn-primary btn-full" disabled=${savingEdit}>
                 ${savingEdit ? 'Saving Changes...' : 'Save Changes'}
               </button>
+            </form>
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- OVERALL MEMBER TARGET MODAL (Super Admin) -->
+      ${showOverallTargetModal ? html`
+        <div class="modal-overlay" onClick=${() => setShowOverallTargetModal(false)}>
+          <div class="modal" onClick=${(e) => e.stopPropagation()}>
+            <div class="modal-header">
+              <div class="modal-title">🎯 Set Overall Target for All Members</div>
+              <button onClick=${() => setShowOverallTargetModal(false)} style="background: none; border: none; font-size: 18px; cursor: pointer;">✕</button>
+            </div>
+            <form onSubmit=${handleSaveOverallTarget}>
+              <p style="font-size: 13px; color: var(--text-secondary); margin: 0 0 12px;">
+                Enter an overall monetary collection target. This target will automatically be set for all team members. You can still adjust individual targets individually as needed using the ✏️ Edit button on any member.
+              </p>
+              <div class="form-group">
+                <label class="form-label">Target Amount Per Member (₹)</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="500"
+                  class="form-input"
+                  style="font-size: 20px; font-weight: 700; color: #047857;"
+                  value=${overallTargetAmount}
+                  onInput=${(e) => setOverallTargetAmount(e.target.value)}
+                  placeholder="25000"
+                  required
+                />
+              </div>
+              <div style="display: flex; gap: 8px; margin-top: 14px;">
+                <button type="button" class="btn btn-secondary" style="flex: 1;" onClick=${() => setShowOverallTargetModal(false)}>Cancel</button>
+                <button type="submit" class="btn btn-primary" style="flex: 2; background: #059669; border-color: #059669;" disabled=${savingOverallTarget}>
+                  ${savingOverallTarget ? 'Saving...' : 'Apply Target to Members ✓'}
+                </button>
+              </div>
             </form>
           </div>
         </div>
@@ -824,14 +926,31 @@ export default function Members() {
               <div class="modal-title">Allocate Calendars to ${selectedMember.fullName}</div>
               <button onClick=${() => setSelectedMember(null)} style="background: none; border: none; font-size: 18px; cursor: pointer;">✕</button>
             </div>
+
+            <!-- Current Stock Stats for Member -->
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; margin-bottom: 12px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; text-align: center;">
+              <div>
+                <div style="font-size: 10px; color: var(--text-secondary); text-transform: uppercase;">Total Received</div>
+                <div style="font-size: 15px; font-weight: 700; color: #0f172a;">${formatNumber(selectedMember.allocatedStock || 0)}</div>
+              </div>
+              <div>
+                <div style="font-size: 10px; color: var(--text-secondary); text-transform: uppercase;">Distributed</div>
+                <div style="font-size: 15px; font-weight: 700; color: var(--primary);">${formatNumber(selectedMember.distributedStock || 0)}</div>
+              </div>
+              <div>
+                <div style="font-size: 10px; color: var(--text-secondary); text-transform: uppercase;">In Hand</div>
+                <div style="font-size: 15px; font-weight: 700; color: #059669;">${formatNumber(selectedMember.remainingStock || 0)}</div>
+              </div>
+            </div>
+
             <form onSubmit=${handleAllocateMember}>
               <div class="form-group">
-                <label class="form-label">Number of Calendars to Allocate</label>
+                <label class="form-label">Number of Additional Calendars to Issue</label>
                 <input
                   type="number"
                   min="1"
                   class="form-input"
-                  placeholder="e.g. 50"
+                  placeholder="e.g. 25"
                   value=${allocQty}
                   onInput=${(e) => setAllocQty(e.target.value)}
                   style="font-size: 20px; font-weight: 700; color: var(--primary);"
@@ -839,7 +958,7 @@ export default function Members() {
                 />
               </div>
               <button type="submit" class="btn btn-primary btn-full" disabled=${allocating}>
-                ${allocating ? 'Allocating...' : 'Confirm Allocation'}
+                ${allocating ? 'Processing Allocation...' : 'Confirm Stock Allocation ✓'}
               </button>
             </form>
           </div>
@@ -921,6 +1040,15 @@ export default function Members() {
 
                     <div style="font-size: 12px; color: var(--text-secondary); margin-top: 1px;">
                       <b>@${m.username}</b> · <span style="text-transform: capitalize;">${m.role.replace('_', ' ')}</span> · 🏷️ ${teamName}
+                    </div>
+
+                    <div style="font-size: 11px; margin-top: 3px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+                      <span style="background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; padding: 1px 6px; border-radius: 4px; font-weight: 600;">
+                        🎯 Target: ${formatCurrency(m.collectionTarget !== undefined && m.collectionTarget !== null ? m.collectionTarget : 25000)}
+                      </span>
+                      <span style="color: #334155;">In Hand: <b style="color: #059669;">${formatNumber(m.remainingStock || 0)}</b></span>
+                      <span style="color: var(--text-secondary);">• Rec: <b>${formatNumber(m.allocatedStock || 0)}</b></span>
+                      <span style="color: var(--text-secondary);">• Dist: <b>${formatNumber(m.distributedStock || 0)}</b></span>
                     </div>
                   </div>
 

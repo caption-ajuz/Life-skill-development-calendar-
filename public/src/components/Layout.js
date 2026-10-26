@@ -81,7 +81,7 @@ export function Navbar({ title }) {
   // PWA and Logout states
   const [pwa, setPwa] = useState(() => pwaState.value);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
-  const [showIOSModal, setShowIOSModal] = useState(false);
+  const [showInstallModal, setShowInstallModal] = useState(false);
   const [installing, setInstalling] = useState(false);
 
   let pressTimer = null;
@@ -137,9 +137,15 @@ export function Navbar({ title }) {
     setInstalling(true);
     try {
       const res = await promptInstall();
-      if (res && res.outcome === 'ios_guide') {
-        setShowIOSModal(true);
+      if (res && res.outcome === 'accepted') {
+        if (window.showToast) window.showToast('Life Skill Course app installed! ✓', 'success');
+      } else if (res && res.outcome === 'already_installed') {
+        if (window.showToast) window.showToast('App is already installed on this device!', 'info');
+      } else {
+        setShowInstallModal(true);
       }
+    } catch (_) {
+      setShowInstallModal(true);
     } finally {
       setInstalling(false);
     }
@@ -346,40 +352,80 @@ export function Navbar({ title }) {
         `
       : ''}
 
-    <!-- iOS Safari PWA Install Instructions Modal -->
-    ${showIOSModal
+    <!-- Universal PWA Install Instructions Modal -->
+    ${showInstallModal
       ? html`
-          <div class="modal-overlay" onClick=${() => setShowIOSModal(false)}>
-            <div class="modal" onClick=${(e) => e.stopPropagation()} style="max-width: 400px; padding: 22px;">
+          <div class="modal-overlay" onClick=${() => setShowInstallModal(false)}>
+            <div class="modal" onClick=${(e) => e.stopPropagation()} style="max-width: 420px; padding: 22px;">
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
-                <h3 style="font-size: 17px; font-weight: 700; color: var(--text); margin: 0;">
-                  Install on iPhone / iPad
-                </h3>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                  <img src="/logo.jpg" alt="Logo" style="width: 36px; height: 36px; border-radius: 8px; border: 1px solid #e2e8f0; background: white; padding: 2px;" />
+                  <div>
+                    <h3 style="font-size: 16px; font-weight: 700; color: var(--text); margin: 0;">
+                      Install Life Skill App
+                    </h3>
+                    <div style="font-size: 11px; color: #0891b2; font-weight: 600;">Fast Launch · Full Offline Support</div>
+                  </div>
+                </div>
                 <button
-                  onClick=${() => setShowIOSModal(false)}
+                  onClick=${() => setShowInstallModal(false)}
                   style="background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text-light);"
                 >
                   ✕
                 </button>
               </div>
-              <div style="font-size: 14px; line-height: 1.6; color: var(--text); margin-bottom: 18px;">
-                <p style="margin-bottom: 10px;">To install <b>Life Skill Course</b> as a standalone mobile app on iOS:</p>
-                <ol style="padding-left: 20px; margin-bottom: 12px;">
-                  <li style="margin-bottom: 6px;">Tap the <b>Share</b> button in the Safari bottom toolbar.</li>
-                  <li style="margin-bottom: 6px;">Scroll down and select <b>Add to Home Screen</b>.</li>
-                  <li>Tap <b>Add</b> in the top right corner.</li>
-                </ol>
-                <div style="font-size: 12.5px; color: #0284c7; background: #e0f2fe; padding: 8px 12px; border-radius: 8px;">
-                  ✓ The app will launch without browser address bars and support offline camp entries!
-                </div>
+
+              ${pwa.isIOS
+                ? html`
+                    <div style="font-size: 13.5px; line-height: 1.6; color: var(--text); margin-bottom: 16px;">
+                      <p style="margin-bottom: 10px;">To install on <b>iPhone / iPad (Safari)</b>:</p>
+                      <ol style="padding-left: 20px; margin-bottom: 12px;">
+                        <li style="margin-bottom: 6px;">Tap the <b>Share</b> button <span style="font-size: 14px;">(⎋)</span> in Safari bottom toolbar.</li>
+                        <li style="margin-bottom: 6px;">Scroll down and select <b>Add to Home Screen</b>.</li>
+                        <li>Tap <b>Add</b> in the top right corner.</li>
+                      </ol>
+                    </div>
+                  `
+                : html`
+                    <div style="font-size: 13.5px; line-height: 1.6; color: var(--text); margin-bottom: 16px;">
+                      <p style="margin-bottom: 10px;">To install on <b>Android / Chrome / Desktop</b>:</p>
+                      <ol style="padding-left: 20px; margin-bottom: 12px;">
+                        <li style="margin-bottom: 6px;">Tap or click the browser menu <span style="font-weight: 700;">(⋮)</span> in the top-right corner.</li>
+                        <li style="margin-bottom: 6px;">Select <b>Install app</b> or <b>Add to Home screen</b>.</li>
+                        <li>Confirm <b>Install</b> to place the app icon on your home screen or desktop.</li>
+                      </ol>
+                    </div>
+                  `}
+
+              <div style="font-size: 12.5px; color: #0369a1; background: #f0f9ff; border: 1px solid #bae6fd; padding: 10px 12px; border-radius: 8px; margin-bottom: 16px;">
+                ✓ <b>Instant Native Experience:</b> Runs full-screen without browser address bars and saves camp collections even when disconnected.
               </div>
-              <button
-                type="button"
-                class="btn btn-primary btn-full"
-                onClick=${() => setShowIOSModal(false)}
-              >
-                Got It
-              </button>
+
+              <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                ${pwa.hasPrompt
+                  ? html`
+                      <button
+                        type="button"
+                        class="btn btn-primary"
+                        onClick=${async () => {
+                          setShowInstallModal(false);
+                          await promptInstall();
+                        }}
+                        style="padding: 8px 14px; font-size: 13px;"
+                      >
+                        📲 Install Now
+                      </button>
+                    `
+                  : ''}
+                <button
+                  type="button"
+                  class="btn btn-secondary"
+                  onClick=${() => setShowInstallModal(false)}
+                  style="padding: 8px 16px; font-size: 13px;"
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         `

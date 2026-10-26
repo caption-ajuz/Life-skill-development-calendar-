@@ -374,8 +374,8 @@ async function seedDefaults() {
   }
 }
 
-// Start Server immediately on 0.0.0.0:3000 as required by environment
-const PORT = 3000;
+// Start Server immediately on 0.0.0.0:3000 (or process.env.PORT for Render/production)
+const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Life Skill Course server listening on port ${PORT}`);

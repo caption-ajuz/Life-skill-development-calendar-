@@ -23,22 +23,34 @@ router.get('/', async (req, res) => {
       teams.map(async (t) => {
         const teamId = t._id;
 
-        const [memberCount, distAgg, colAgg, stockAlloc] = await Promise.all([
+        const [memberCount, distAgg, colAgg, teamAllocAgg, memberAllocAgg] = await Promise.all([
           User.countDocuments({ teamId, isActive: true }),
           Distribution.aggregate([
-            { $match: { teamId, status: 'active' } },
+            { $match: { teamId, status: { $in: ['active', 'approved'] } } },
             { $group: { _id: null, total: { $sum: '$quantity' } } }
           ]),
           Collection.aggregate([
-            { $match: { teamId, status: 'active' } },
+            { $match: { teamId, status: { $in: ['active', 'approved'] } } },
             { $group: { _id: null, total: { $sum: '$amount' } } }
           ]),
-          StockAllocation.findOne({ teamId, memberId: null })
+          StockAllocation.aggregate([
+            { $match: { teamId, memberId: null } },
+            { $group: { _id: null, total: { $sum: '$quantity' } } }
+          ]),
+          StockAllocation.aggregate([
+            { $match: { teamId, memberId: { $ne: null } } },
+            { $group: { _id: null, total: { $sum: '$quantity' } } }
+          ])
         ]);
 
         const totalCollected = t.leaderEntersOverallCollection
           ? (t.overallCollectedAmount || 0)
           : (colAgg[0] ? colAgg[0].total : 0);
+
+        const allocatedStock = teamAllocAgg[0] ? teamAllocAgg[0].total : 0;
+        const issuedToMembers = memberAllocAgg[0] ? memberAllocAgg[0].total : 0;
+        const remainingTeamStock = Math.max(0, allocatedStock - issuedToMembers);
+        const totalDistributed = distAgg[0] ? distAgg[0].total : 0;
 
         return {
           _id: t._id,
@@ -51,9 +63,12 @@ router.get('/', async (req, res) => {
           overallCollectionUpdatedAt: t.overallCollectionUpdatedAt || null,
           createdAt: t.createdAt,
           memberCount,
-          totalDistributed: distAgg[0] ? distAgg[0].total : 0,
+          totalDistributed,
           totalCollected,
-          allocatedStock: stockAlloc ? stockAlloc.quantity : 0
+          allocatedStock,
+          issuedToMembers,
+          remainingTeamStock,
+          remainingWithMembers: Math.max(0, issuedToMembers - totalDistributed)
         };
       })
     );

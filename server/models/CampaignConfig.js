@@ -26,6 +26,11 @@ const campaignConfigSchema = new mongoose.Schema(
       default: 0,
       min: 0
     },
+    defaultMemberTarget: {
+      type: Number,
+      default: 25000,
+      min: 0
+    },
     campaignYear: {
       type: Number,
       default: () => new Date().getFullYear()

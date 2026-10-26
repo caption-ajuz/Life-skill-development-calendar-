@@ -80,6 +80,7 @@ const mockStore = {
       role: 'super_admin',
       passwordHint: 'admin123',
       pinHint: '1111',
+      collectionTarget: 25000,
       isActive: true,
       createdAt: new Date().toISOString()
     },
@@ -91,6 +92,7 @@ const mockStore = {
       role: 'usthad',
       passwordHint: 'usthad123',
       pinHint: '2222',
+      collectionTarget: 25000,
       isActive: true,
       createdAt: new Date().toISOString()
     },
@@ -102,6 +104,7 @@ const mockStore = {
       role: 'team_leader',
       passwordHint: 'leader123',
       pinHint: '3333',
+      collectionTarget: 25000,
       teamId: { _id: '65f000000000000000000011', name: 'Al-Huda Team' },
       isActive: true,
       createdAt: new Date().toISOString()
@@ -114,6 +117,7 @@ const mockStore = {
       role: 'team_member',
       passwordHint: 'member123',
       pinHint: '4444',
+      collectionTarget: 25000,
       teamId: { _id: '65f000000000000000000011', name: 'Al-Huda Team' },
       isActive: true,
       createdAt: new Date().toISOString()
@@ -477,6 +481,9 @@ export function mockFallbackMiddleware(req, res, next) {
   if (path.startsWith('/dashboard/team/') && method === 'GET') {
     const teamId = path.split('/')[3];
     const team = mockStore.teams.find(t => t._id === teamId) || mockStore.teams[0];
+    const pendingCols = mockStore.collections.filter(c => c.approvalStatus === 'pending');
+    const pendingDists = mockStore.distributions.filter(d => d.approvalStatus === 'pending');
+
     return res.json({
       success: true,
       data: {
@@ -490,17 +497,44 @@ export function mockFallbackMiddleware(req, res, next) {
         pendingTransfers: 5000,
         outstandingCollections: 5000,
         pendingCorrections: 0,
+        pendingApprovals: {
+          collections: pendingCols,
+          distributions: pendingDists,
+          total: pendingCols.length + pendingDists.length
+        },
+        leaderPersonalProgress: {
+          userId: '65f000000000000000000003',
+          fullName: 'Ahmed Bilal',
+          target: 25000,
+          approvedCollected: 15000,
+          remaining: 10000,
+          progressPercent: 60
+        },
+        teamTargetSummary: {
+          totalTarget: 75000,
+          totalCollected: team.totalCollected,
+          remaining: Math.max(0, 75000 - team.totalCollected),
+          progressPercent: Math.min(100, Math.round((team.totalCollected / 75000) * 100))
+        },
         memberProgress: mockStore.users
           .filter(u => u.role !== 'super_admin' && u.role !== 'usthad')
-          .map(m => ({
-            _id: m._id,
-            fullName: m.fullName,
-            role: m.role,
-            phone: m.phone,
-            allocated: 200,
-            distributed: 150,
-            collected: 15000
-          }))
+          .map(m => {
+            const target = m.collectionTarget !== undefined && m.collectionTarget !== null ? m.collectionTarget : 25000;
+            const collected = 15000;
+            return {
+              _id: m._id,
+              fullName: m.fullName,
+              role: m.role,
+              phone: m.phone,
+              allocated: 200,
+              distributed: 150,
+              remainingStock: 50,
+              collected,
+              target,
+              remainingToTarget: Math.max(0, target - collected),
+              targetPercentage: Math.min(100, Math.round((collected / target) * 100))
+            };
+          })
       }
     });
   }
@@ -508,6 +542,8 @@ export function mockFallbackMiddleware(req, res, next) {
   if (path.startsWith('/dashboard/member/') && method === 'GET') {
     const memberId = path.split('/')[3];
     const user = mockStore.users.find(u => u._id === memberId) || mockStore.users[3];
+    const target = user.collectionTarget !== undefined && user.collectionTarget !== null ? user.collectionTarget : 25000;
+    const collectedAmount = 18000;
     return res.json({
       success: true,
       data: {
@@ -521,7 +557,10 @@ export function mockFallbackMiddleware(req, res, next) {
         allocatedStock: 250,
         distributedStock: 180,
         remainingStock: 70,
-        collectedAmount: 18000,
+        collectedAmount,
+        collectionTarget: target,
+        remainingToTarget: Math.max(0, target - collectedAmount),
+        targetPercentage: Math.min(100, Math.round((collectedAmount / target) * 100)),
         confirmedTransfers: 15000,
         pendingTransfers: 2000,
         untransferredAmount: 1000,
@@ -767,6 +806,59 @@ export function mockFallbackMiddleware(req, res, next) {
     });
   }
 
+  // Batch update member collection targets
+  if (path === '/users/batch-target' && method === 'POST') {
+    const caller = getUserFromToken();
+    if (caller.role !== 'super_admin') {
+      return res.status(403).json({ success: false, error: 'Only Super Admin can update overall member targets.' });
+    }
+    const targetAmt = parseFloat(req.body.targetAmount);
+    if (isNaN(targetAmt) || targetAmt < 0) {
+      return res.status(400).json({ success: false, error: 'Target amount must be a positive number.' });
+    }
+    mockStore.campaign.defaultMemberTarget = targetAmt;
+    let count = 0;
+    mockStore.users.forEach(u => {
+      if (u.role === 'team_member') {
+        u.collectionTarget = targetAmt;
+        count++;
+      }
+    });
+    return res.json({ success: true, message: `Successfully updated target to ₹${targetAmt} for ${count} members.`, defaultMemberTarget: targetAmt, modifiedCount: count });
+  }
+
+  // Update individual user target
+  if (path.startsWith('/users/') && path.endsWith('/target') && method === 'PUT') {
+    const caller = getUserFromToken();
+    if (caller.role !== 'super_admin') {
+      return res.status(403).json({ success: false, error: 'Only Super Admin can update individual member targets.' });
+    }
+    const id = path.split('/')[2];
+    const user = mockStore.users.find(u => u._id === id);
+    if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
+    const targetAmt = parseFloat(req.body.targetAmount);
+    if (isNaN(targetAmt) || targetAmt < 0) {
+      return res.status(400).json({ success: false, error: 'Target amount must be a non-negative number.' });
+    }
+    user.collectionTarget = targetAmt;
+    return res.json({ success: true, message: 'Collection target updated successfully.', data: { userId: user._id, fullName: user.fullName, collectionTarget: targetAmt } });
+  }
+
+  // Update user profile details
+  if (path.startsWith('/users/') && method === 'PUT' && !path.includes('/target') && !path.includes('/toggle-active') && !path.includes('/reset-') && !path.includes('/credentials')) {
+    const id = path.split('/')[2];
+    const user = mockStore.users.find(u => u._id === id);
+    if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
+    if (req.body.fullName) user.fullName = req.body.fullName.trim();
+    if (req.body.phone) user.phone = req.body.phone.trim();
+    if (req.body.role) user.role = req.body.role;
+    if (req.body.collectionTarget !== undefined) user.collectionTarget = parseFloat(req.body.collectionTarget) || 0;
+    if (req.body.teamId) {
+      user.teamId = mockStore.teams.find(t => t._id === req.body.teamId) || null;
+    }
+    return res.json({ success: true, message: 'User updated successfully.', data: user });
+  }
+
   // Toggle active/inactive
   if (path.startsWith('/users/') && path.endsWith('/toggle-active') && method === 'PUT') {
     const id = path.split('/')[2];
@@ -886,15 +978,126 @@ export function mockFallbackMiddleware(req, res, next) {
     return res.json({ success: true, data: mockStore.campaign });
   }
 
-  if (path === '/stock/allocations' && method === 'GET') {
-    return res.json({ success: true, data: mockStore.allocations });
+  if (path === '/stock/summary' && method === 'GET') {
+    const caller = getUserFromToken();
+    const teamAllocs = mockStore.allocations.filter((a) => !a.memberId);
+    const memberAllocs = mockStore.allocations.filter((a) => a.memberId);
+    const totalAllocatedToTeams = teamAllocs.reduce((sum, a) => sum + (a.quantity || 0), 0);
+    const totalAllocatedToMembers = memberAllocs.reduce((sum, a) => sum + (a.quantity || 0), 0);
+    const totalDistributed = mockStore.distributions.filter((d) => d.status === 'approved' || d.status === 'active').reduce((sum, d) => sum + (d.quantity || 0), 0);
+    const unallocatedCampaignStock = Math.max(0, mockStore.campaign.totalStock - totalAllocatedToTeams);
+    const unallocatedTeamStock = Math.max(0, totalAllocatedToTeams - totalAllocatedToMembers);
+    const remainingWithMembers = Math.max(0, totalAllocatedToMembers - totalDistributed);
+
+    const summary = {
+      totalCampaignStock: mockStore.campaign.totalStock,
+      calendarPrice: mockStore.campaign.calendarPrice,
+      totalAllocatedToTeams,
+      unallocatedCampaignStock,
+      totalAllocatedToMembers,
+      unallocatedTeamStock,
+      totalDistributed,
+      remainingWithMembers
+    };
+
+    if (caller.role === 'team_leader' && caller.teamId) {
+      const leaderTeamId = caller.teamId._id || caller.teamId;
+      const team = mockStore.teams.find((t) => t._id === leaderTeamId);
+      const teamReceived = mockStore.allocations
+        .filter((a) => (a.teamId?._id || a.teamId) === leaderTeamId && !a.memberId)
+        .reduce((sum, a) => sum + (a.quantity || 0), 0);
+      const teamIssued = mockStore.allocations
+        .filter((a) => (a.teamId?._id || a.teamId) === leaderTeamId && a.memberId)
+        .reduce((sum, a) => sum + (a.quantity || 0), 0);
+      const teamDist = mockStore.distributions
+        .filter((d) => (d.teamId?._id || d.teamId) === leaderTeamId && (d.status === 'approved' || d.status === 'active'))
+        .reduce((sum, d) => sum + (d.quantity || 0), 0);
+
+      summary.teamStock = {
+        teamId: leaderTeamId,
+        teamName: team ? team.name : 'My Team',
+        receivedFromCentral: teamReceived,
+        issuedToMembers: teamIssued,
+        remainingTeamStock: Math.max(0, teamReceived - teamIssued),
+        distributedByMembers: teamDist,
+        remainingWithMembers: Math.max(0, teamIssued - teamDist)
+      };
+    }
+
+    return res.json({ success: true, data: summary });
+  }
+
+  if ((path === '/stock/allocations' || path === '/stock/history') && method === 'GET') {
+    const caller = getUserFromToken();
+    let list = [...mockStore.allocations];
+    if (caller.role === 'team_member') {
+      list = list.filter((a) => (a.memberId?._id || a.memberId) === caller._id);
+    } else if (caller.role === 'team_leader' && caller.teamId) {
+      const leaderTeamId = caller.teamId._id || caller.teamId;
+      list = list.filter((a) => (a.teamId?._id || a.teamId) === leaderTeamId);
+    }
+    return res.json({ success: true, data: list.reverse() });
+  }
+
+  if (path === '/stock/team-breakdown' && method === 'GET') {
+    const caller = getUserFromToken();
+    let teams = [...mockStore.teams];
+    if (caller.role === 'team_leader' && caller.teamId) {
+      const leaderTeamId = caller.teamId._id || caller.teamId;
+      teams = teams.filter((t) => t._id === leaderTeamId);
+    }
+
+    const data = teams.map((t) => {
+      const received = mockStore.allocations
+        .filter((a) => (a.teamId?._id || a.teamId) === t._id && !a.memberId)
+        .reduce((sum, a) => sum + (a.quantity || 0), 0);
+      const issued = mockStore.allocations
+        .filter((a) => (a.teamId?._id || a.teamId) === t._id && a.memberId)
+        .reduce((sum, a) => sum + (a.quantity || 0), 0);
+      const distributed = mockStore.distributions
+        .filter((d) => (d.teamId?._id || d.teamId) === t._id && (d.status === 'approved' || d.status === 'active'))
+        .reduce((sum, d) => sum + (d.quantity || 0), 0);
+
+      const teamMembers = mockStore.users.filter((u) => (u.teamId?._id || u.teamId) === t._id);
+      const memberStats = teamMembers.map((m) => {
+        const mAlloc = mockStore.allocations
+          .filter((a) => (a.memberId?._id || a.memberId) === m._id)
+          .reduce((sum, a) => sum + (a.quantity || 0), 0);
+        const mDist = mockStore.distributions
+          .filter((d) => (d.memberId?._id || d.memberId) === m._id && (d.status === 'approved' || d.status === 'active'))
+          .reduce((sum, d) => sum + (d.quantity || 0), 0);
+        return {
+          _id: m._id,
+          fullName: m.fullName,
+          username: m.username,
+          role: m.role,
+          phone: m.phone,
+          allocatedStock: mAlloc,
+          distributedStock: mDist,
+          remainingStock: Math.max(0, mAlloc - mDist)
+        };
+      });
+
+      return {
+        teamId: t._id,
+        teamName: t.name,
+        receivedFromCentral: received,
+        issuedToMembers: issued,
+        remainingTeamStock: Math.max(0, received - issued),
+        distributedByMembers: distributed,
+        remainingWithMembers: Math.max(0, issued - distributed),
+        members: memberStats
+      };
+    });
+
+    return res.json({ success: true, data });
   }
 
   if (path === '/stock/reconciliation' && method === 'GET') {
-    const totalDist = mockStore.teams.reduce((s, t) => s + (t.totalDistributed || 0), 0);
-    const allocatedTeams = mockStore.teams.reduce((s, t) => s + (t.allocatedStock || 0), 0);
+    const totalDist = mockStore.distributions.filter((d) => d.status === 'approved' || d.status === 'active').reduce((s, d) => s + (d.quantity || 0), 0);
+    const allocatedTeams = mockStore.allocations.filter((a) => !a.memberId).reduce((s, a) => s + (a.quantity || 0), 0);
     const unallocatedCentral = Math.max(0, mockStore.campaign.totalStock - allocatedTeams);
-    const allocatedMembers = 1400;
+    const allocatedMembers = mockStore.allocations.filter((a) => a.memberId).reduce((s, a) => s + (a.quantity || 0), 0);
     const unallocatedTeams = Math.max(0, allocatedTeams - allocatedMembers);
     const remainingMembers = Math.max(0, allocatedMembers - totalDist);
     const accounted = unallocatedCentral + unallocatedTeams + remainingMembers + totalDist;
@@ -915,37 +1118,134 @@ export function mockFallbackMiddleware(req, res, next) {
         reconciled: variance === 0,
         calendarPrice: mockStore.campaign.calendarPrice,
         expectedGrossRevenue: totalDist * mockStore.campaign.calendarPrice,
-        teams: mockStore.teams.map(t => ({
-          teamId: t._id,
-          teamName: t.name,
-          allocatedToTeam: t.allocatedStock,
-          allocatedToMembers: Math.round(t.allocatedStock * 0.7),
-          unallocatedInTeam: Math.round(t.allocatedStock * 0.3),
-          distributed: t.totalDistributed,
-          remainingWithMembers: Math.max(0, Math.round(t.allocatedStock * 0.7) - t.totalDistributed),
-          variance: 0
-        }))
+        teams: mockStore.teams.map((t) => {
+          const tReceived = mockStore.allocations.filter((a) => (a.teamId?._id || a.teamId) === t._id && !a.memberId).reduce((s, a) => s + (a.quantity || 0), 0);
+          const tIssued = mockStore.allocations.filter((a) => (a.teamId?._id || a.teamId) === t._id && a.memberId).reduce((s, a) => s + (a.quantity || 0), 0);
+          const tDist = mockStore.distributions.filter((d) => (d.teamId?._id || d.teamId) === t._id && (d.status === 'approved' || d.status === 'active')).reduce((s, d) => s + (d.quantity || 0), 0);
+          return {
+            teamId: t._id,
+            teamName: t.name,
+            allocatedToTeam: tReceived,
+            allocatedToMembers: tIssued,
+            unallocatedInTeam: Math.max(0, tReceived - tIssued),
+            distributed: tDist,
+            remainingWithMembers: Math.max(0, tIssued - tDist),
+            variance: 0
+          };
+        })
       }
     });
   }
 
   if (path === '/stock/allocate-team' && method === 'POST') {
-    const { teamId, quantity, notes } = req.body;
-    const team = mockStore.teams.find(t => t._id === teamId);
-    if (team) {
-      team.allocatedStock = (team.allocatedStock || 0) + parseInt(quantity, 10);
+    const caller = getUserFromToken();
+    if (caller.role !== 'super_admin') {
+      return res.status(403).json({ success: false, error: 'Only Super Admin can allocate stock to teams.' });
     }
+    const { teamId, quantity, notes, clientId } = req.body;
+    const qty = parseInt(quantity, 10);
+    if (isNaN(qty) || qty <= 0) {
+      return res.status(400).json({ success: false, error: 'Quantity must be a positive integer greater than 0.' });
+    }
+
+    if (clientId) {
+      const existing = mockStore.allocations.find((a) => a.clientId === clientId);
+      if (existing) {
+        return res.json({ success: true, data: existing, idempotent: true });
+      }
+    }
+
+    const team = mockStore.teams.find((t) => t._id === teamId);
+    if (!team) return res.status(404).json({ success: false, error: 'Team not found.' });
+
+    const totalAllocatedToTeams = mockStore.allocations
+      .filter((a) => !a.memberId)
+      .reduce((sum, a) => sum + (a.quantity || 0), 0);
+    const availableCentralStock = Math.max(0, mockStore.campaign.totalStock - totalAllocatedToTeams);
+
+    if (qty > availableCentralStock) {
+      return res.status(400).json({
+        success: false,
+        error: `Cannot allocate ${qty} calendars. Available in Central Stock: ${availableCentralStock}.`
+      });
+    }
+
+    team.allocatedStock = (team.allocatedStock || 0) + qty;
     const newAlloc = {
       _id: '65f0000000000000000000' + (mockStore.allocations.length + 45),
-      teamId: team ? { _id: team._id, name: team.name } : null,
+      teamId: { _id: team._id, name: team.name },
       memberId: null,
-      quantity: parseInt(quantity, 10),
-      notes,
-      allocatedBy: { fullName: 'Super Admin' },
+      type: 'team',
+      quantity: qty,
+      notes: notes || '',
+      clientId: clientId || undefined,
+      allocatedBy: { fullName: caller.fullName || 'Super Admin' },
       createdAt: new Date().toISOString()
     };
     mockStore.allocations.push(newAlloc);
-    return res.status(201).json({ success: true, data: newAlloc });
+    return res.status(201).json({ success: true, data: newAlloc, availableCentralStock: availableCentralStock - qty });
+  }
+
+  if (path === '/stock/allocate-member' && method === 'POST') {
+    const caller = getUserFromToken();
+    if (!['super_admin', 'team_leader'].includes(caller.role)) {
+      return res.status(403).json({ success: false, error: 'Unauthorized to allocate member stock.' });
+    }
+    const { memberId, quantity, notes, clientId } = req.body;
+    const qty = parseInt(quantity, 10);
+    if (isNaN(qty) || qty <= 0) {
+      return res.status(400).json({ success: false, error: 'Quantity must be a positive integer greater than 0.' });
+    }
+
+    if (clientId) {
+      const existing = mockStore.allocations.find((a) => a.clientId === clientId);
+      if (existing) {
+        return res.json({ success: true, data: existing, idempotent: true });
+      }
+    }
+
+    const member = mockStore.users.find((u) => u._id === memberId);
+    if (!member) return res.status(404).json({ success: false, error: 'Member not found.' });
+
+    const memberTeamId = member.teamId ? (member.teamId._id || member.teamId) : null;
+    if (!memberTeamId) return res.status(400).json({ success: false, error: 'Member has no team assigned.' });
+
+    if (caller.role === 'team_leader') {
+      const leaderTeamId = caller.teamId ? (caller.teamId._id || caller.teamId) : null;
+      if (!leaderTeamId || leaderTeamId !== memberTeamId) {
+        return res.status(403).json({ success: false, error: 'Forbidden: You may only allocate stock to members of your own team.' });
+      }
+    }
+
+    const team = mockStore.teams.find((t) => t._id === memberTeamId);
+    const teamTotalReceived = mockStore.allocations
+      .filter((a) => (a.teamId?._id || a.teamId) === memberTeamId && !a.memberId)
+      .reduce((sum, a) => sum + (a.quantity || 0), 0);
+    const teamAlreadyIssued = mockStore.allocations
+      .filter((a) => (a.teamId?._id || a.teamId) === memberTeamId && a.memberId)
+      .reduce((sum, a) => sum + (a.quantity || 0), 0);
+    const teamAvailableStock = Math.max(0, teamTotalReceived - teamAlreadyIssued);
+
+    if (qty > teamAvailableStock) {
+      return res.status(400).json({
+        success: false,
+        error: `Cannot allocate ${qty} calendars. Team only has ${teamAvailableStock} available to distribute.`
+      });
+    }
+
+    const newAlloc = {
+      _id: '65f0000000000000000000' + (mockStore.allocations.length + 45),
+      teamId: { _id: memberTeamId, name: team ? team.name : 'Team' },
+      memberId: { _id: member._id, fullName: member.fullName, role: member.role },
+      type: 'member',
+      quantity: qty,
+      notes: notes || '',
+      clientId: clientId || undefined,
+      allocatedBy: { fullName: caller.fullName || 'Team Leader' },
+      createdAt: new Date().toISOString()
+    };
+    mockStore.allocations.push(newAlloc);
+    return res.status(201).json({ success: true, data: newAlloc, teamAvailableStock: teamAvailableStock - qty });
   }
 
   // Corrections: /api/corrections/*
@@ -1346,6 +1646,7 @@ export function mockFallbackMiddleware(req, res, next) {
       'includeTopPerformers',
       'includeHandoverStatus',
       'includeProgressBar',
+      'includeTargetProgress',
       'includeZeroActivity',
       'includeOfflineNotice',
       'includeFooter'
@@ -1397,6 +1698,8 @@ export function mockFallbackMiddleware(req, res, next) {
         return {
           id: u._id,
           name: u.fullName,
+          role: u.role,
+          target: u.collectionTarget !== undefined && u.collectionTarget !== null ? u.collectionTarget : 25000,
           distributed: approvedDists.reduce((s, x) => s + (x.quantity || 0), 0),
           collected: approvedCols.reduce((s, x) => s + (x.amount || 0), 0)
         };

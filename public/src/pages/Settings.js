@@ -3,6 +3,7 @@ import db from '../services/db.js';
 import { currentUser, logout } from '../store/auth.js';
 import { syncStatus, syncAll, refreshPendingCount } from '../services/sync.js';
 import { compressImage } from '../utils/image.js';
+import { pwaState, promptInstall } from '../services/pwa.js';
 
 const html = window.html;
 const { useState, useEffect, useCallback } = window.hooks;
@@ -55,22 +56,11 @@ export default function Settings() {
   const [cloudinaryStatus, setCloudinaryStatus] = useState(null);
   const [userPhotoUploading, setUserPhotoUploading] = useState(false);
 
-  // PWA install prompt handler
-  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  // PWA install state
+  const [pwa, setPwa] = useState(() => pwaState.value);
 
   useEffect(() => {
-    api.get('/api/uploads/cloudinary-status').then((res) => {
-      if (res && res.success) {
-        setCloudinaryStatus(res);
-      }
-    }).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    window.addEventListener('beforeinstallprompt', (e) => {
-      e.preventDefault();
-      setDeferredPrompt(e);
-    });
+    return pwaState.subscribe ? pwaState.subscribe(setPwa) : undefined;
   }, []);
 
   // Fetch Admin Setup data if user is Super Admin

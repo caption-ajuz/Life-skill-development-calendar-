@@ -16,23 +16,28 @@
   <link rel="icon" type="image/svg+xml" href="/icon.svg">
   <link rel="alternate icon" href="/logo.jpg">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <script>
+    // Early capture of beforeinstallprompt so install readiness is never missed
+    window.deferredPWAInstallPrompt = null;
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      window.deferredPWAInstallPrompt = e;
+      if (typeof window.onPWAInstallPrompt === 'function') {
+        window.onPWAInstallPrompt(e);
+      }
+    });
+  </script>
   <script src="/socket.io/socket.io.js" onerror="console.warn('Socket.io offline fallback')"></script>
   <!-- Zero-CDN, Instant Offline-Ready Standalone Engine (13KB) -->
   <script type="module">
-    // Immediately purge any stale caches from previous versions (e.g., lsc-v2)
+    // Clean up outdated legacy caches if present without deleting active app shell
     try {
       if ('caches' in window) {
         const keys = await caches.keys();
-        let deletedLegacy = false;
         for (const k of keys) {
-          if (!k.startsWith('lsc-v6')) {
+          if (k.startsWith('lsc-v1') || k.startsWith('lsc-v2') || k.startsWith('lsc-v3') || k.startsWith('lsc-v4') || k.startsWith('lsc-v5')) {
             await caches.delete(k);
-            deletedLegacy = true;
           }
-        }
-        if (deletedLegacy && !sessionStorage.getItem('lsc_v6_reloaded')) {
-          sessionStorage.setItem('lsc_v6_reloaded', '1');
-          window.location.reload();
         }
       }
       if ('serviceWorker' in navigator) {
@@ -50,7 +55,7 @@
         }
       }
     } catch (e) {
-      console.warn('Cache cleanup note:', e);
+      console.warn('Cache check note:', e);
     }
 
     import * as lib from '/vendor/preact-htm.js';
@@ -370,10 +375,14 @@
   <div id="app"></div>
   
   <script>
-    // Register service worker
+    // Register service worker with explicit root scope
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js').catch(err => console.warn('SW registration failed:', err));
+        navigator.serviceWorker.register('/sw.js', { scope: '/' })
+          .then((reg) => {
+            reg.update().catch(() => {});
+          })
+          .catch(err => console.warn('SW registration failed:', err));
       });
     }
   </script>

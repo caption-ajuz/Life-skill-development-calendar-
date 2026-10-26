@@ -1,6 +1,6 @@
 // PWA Install State and Installation Prompt Service
 
-let deferredPrompt = null;
+let deferredPrompt = (typeof window !== 'undefined' && window.deferredPWAInstallPrompt) || null;
 
 const isStandalone = () => {
   if (typeof window === 'undefined') return false;
@@ -39,26 +39,31 @@ const createSignal = (val) => {
 };
 
 export const pwaState = createSignal({
-  isInstallable: false,
+  isInstallable: !!deferredPrompt,
   isInstalled: isStandalone(),
   isIOS: isIOSDevice(),
-  hasPrompt: false
+  hasPrompt: !!deferredPrompt
 });
 
 if (typeof window !== 'undefined') {
-  window.addEventListener('beforeinstallprompt', (e) => {
+  const handlePrompt = (e) => {
     // Prevent Chromium from automatically showing the mini-infobar
     e.preventDefault();
     deferredPrompt = e;
+    window.deferredPWAInstallPrompt = e;
     pwaState.value = {
       ...pwaState.value,
       isInstallable: true,
       hasPrompt: true
     };
-  });
+  };
+
+  window.addEventListener('beforeinstallprompt', handlePrompt);
+  window.onPWAInstallPrompt = handlePrompt;
 
   window.addEventListener('appinstalled', () => {
     deferredPrompt = null;
+    window.deferredPWAInstallPrompt = null;
     pwaState.value = {
       ...pwaState.value,
       isInstallable: false,
@@ -88,14 +93,16 @@ export async function promptInstall() {
     return { outcome: 'ios_guide' };
   }
 
-  if (!deferredPrompt) {
+  const promptEvent = deferredPrompt || (typeof window !== 'undefined' && window.deferredPWAInstallPrompt);
+
+  if (!promptEvent) {
     return { outcome: 'unavailable' };
   }
 
   try {
-    await deferredPrompt.prompt();
-    const choiceResult = await deferredPrompt.userChoice;
-    if (choiceResult.outcome === 'accepted') {
+    await promptEvent.prompt();
+    const choiceResult = await promptEvent.userChoice;
+    if (choiceResult && choiceResult.outcome === 'accepted') {
       pwaState.value = {
         ...pwaState.value,
         isInstalled: true,
@@ -103,10 +110,11 @@ export async function promptInstall() {
         hasPrompt: false
       };
       deferredPrompt = null;
+      if (typeof window !== 'undefined') window.deferredPWAInstallPrompt = null;
     }
     return choiceResult;
   } catch (err) {
     console.warn('Install prompt error:', err);
-    return { outcome: 'error', error: err.message };
+    return { outcome: 'unavailable', error: err.message };
   }
 }

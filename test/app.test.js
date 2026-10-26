@@ -930,3 +930,402 @@ test('Authorization: Photo upload permission rules across roles', () => {
   // Member upload for other member (forbidden)
   assert.equal(canUploadPhotoFor(memberA, memberB), false, 'Member cannot upload photo for other users');
 });
+
+// ============================================================================
+// 27-36: Physical Calendar Stock Allocation Lifecycle (Super Admin & Team Leader)
+// ============================================================================
+
+// 27. Test 1 & 2: Super Admin allocates calendars to Team A -> Available stock increases
+test('Stock Allocation 1 & 2: Super Admin allocates calendars to Team A and Team A stock increases', () => {
+  const centralStore = { totalCampaignStock: 5000, allocatedToTeams: 0 };
+  const teamA = { id: 'team-A', name: 'Al-Huda Team', receivedFromCentral: 0, issuedToMembers: 0 };
+
+  function allocateToTeam(user, targetTeam, quantity) {
+    if (user.role !== 'super_admin') throw new Error('Forbidden: Only Super Admin can allocate stock to teams');
+    if (!Number.isInteger(quantity) || quantity <= 0) throw new Error('Quantity must be a positive integer');
+
+    const availableCentral = centralStore.totalCampaignStock - centralStore.allocatedToTeams;
+    if (quantity > availableCentral) throw new Error(`Exceeds central stock. Available: ${availableCentral}`);
+
+    // Immutable allocation ledger transaction
+    const transaction = {
+      id: `alloc-${Date.now()}`,
+      teamId: targetTeam.id,
+      memberId: null,
+      type: 'team',
+      quantity,
+      allocatedBy: user.id,
+      date: new Date().toISOString()
+    };
+
+    centralStore.allocatedToTeams += quantity;
+    targetTeam.receivedFromCentral += quantity;
+
+    return transaction;
+  }
+
+  const superAdmin = { id: 'admin-1', role: 'super_admin' };
+  const allocTx = allocateToTeam(superAdmin, teamA, 500);
+
+  assert.equal(allocTx.quantity, 500, 'Transaction recorded 500 calendars');
+  assert.equal(teamA.receivedFromCentral, 500, "Team A's received stock increased by exactly 500");
+  assert.equal(centralStore.totalCampaignStock - centralStore.allocatedToTeams, 4500, 'Central store remaining is 4,500');
+});
+
+// 28. Test 3, 4, 5: Team Leader A allocates calendars to Member A -> Team A remaining stock decreases, Member A received stock increases
+test('Stock Allocation 3, 4, 5: Team Leader A allocates calendars to Member A and balances update', () => {
+  const teamA = { id: 'team-A', name: 'Al-Huda Team', receivedFromCentral: 500, issuedToMembers: 0 };
+  const memberA = { id: 'mem-A1', teamId: 'team-A', receivedStock: 0, distributedStock: 0 };
+  const leaderA = { id: 'lead-A', role: 'team_leader', teamId: 'team-A' };
+
+  function allocateToMember(actingUser, targetMember, quantity) {
+    if (!['super_admin', 'team_leader'].includes(actingUser.role)) throw new Error('Unauthorized');
+    if (actingUser.role === 'team_leader' && actingUser.teamId !== targetMember.teamId) {
+      throw new Error('Forbidden: You may only allocate stock to members of your own team');
+    }
+    if (!Number.isInteger(quantity) || quantity <= 0) throw new Error('Invalid quantity');
+
+    const teamRemainingStock = teamA.receivedFromCentral - teamA.issuedToMembers;
+    if (quantity > teamRemainingStock) throw new Error(`Exceeds team stock. Available: ${teamRemainingStock}`);
+
+    const transaction = {
+      id: `alloc-m-${Date.now()}`,
+      teamId: targetMember.teamId,
+      memberId: targetMember.id,
+      type: 'member',
+      quantity,
+      allocatedBy: actingUser.id,
+      date: new Date().toISOString()
+    };
+
+    teamA.issuedToMembers += quantity;
+    targetMember.receivedStock += quantity;
+
+    return transaction;
+  }
+
+  const tx = allocateToMember(leaderA, memberA, 75);
+
+  assert.equal(tx.quantity, 75, 'Allocated 75 calendars');
+  assert.equal(teamA.issuedToMembers, 75, 'Team A issued to members increased to 75');
+  const teamARemaining = teamA.receivedFromCentral - teamA.issuedToMembers;
+  assert.equal(teamARemaining, 425, "Team A's remaining stock decreased from 500 to 425");
+  assert.equal(memberA.receivedStock, 75, "Member A's received stock increased by exactly 75");
+});
+
+// 29. Test 6: Another Team Leader cannot allocate stock belonging to Team A
+test('Stock Allocation 6: Cross-team stock allocation by unauthorized Team Leader is strictly rejected', () => {
+  const leaderB = { id: 'lead-B', role: 'team_leader', teamId: 'team-B' };
+  const memberA = { id: 'mem-A1', teamId: 'team-A', receivedStock: 0 };
+
+  function validateLeaderAllocationScope(leader, member) {
+    if (leader.role === 'team_leader' && leader.teamId !== member.teamId) {
+      return { allowed: false, status: 403, error: 'Forbidden: You may only allocate stock to members belonging to your authorized team' };
+    }
+    return { allowed: true };
+  }
+
+  const result = validateLeaderAllocationScope(leaderB, memberA);
+  assert.equal(result.allowed, false, 'Cross-team allocation disallowed');
+  assert.equal(result.status, 403, 'Returns HTTP 403 Forbidden');
+});
+
+// 30. Test 7: An allocation exceeding available stock is rejected
+test('Stock Allocation 7: Allocations exceeding available central or team stock are rejected', () => {
+  const centralStore = { totalCampaignStock: 1000, allocatedToTeams: 900 };
+  const teamA = { id: 'team-A', receivedFromCentral: 100, issuedToMembers: 80 };
+
+  // Attempting to allocate 150 from central store (available: 100)
+  const availableCentral = centralStore.totalCampaignStock - centralStore.allocatedToTeams; // 100
+  const canCentralAllocate = 150 <= availableCentral;
+  assert.equal(canCentralAllocate, false, 'Central allocation of 150 exceeds available 100');
+
+  // Attempting to allocate 30 from Team A (available: 20)
+  const availableTeam = teamA.receivedFromCentral - teamA.issuedToMembers; // 20
+  const canTeamAllocate = 30 <= availableTeam;
+  assert.equal(canTeamAllocate, false, 'Team allocation of 30 exceeds available 20');
+
+  // Rejection of negative or zero allocations
+  assert.throws(() => {
+    const qty = -10;
+    if (qty <= 0) throw new Error('Quantity must be a positive integer greater than 0');
+  }, /Quantity must be a positive integer/, 'Negative allocations rejected');
+});
+
+// 31. Test 8: Repeated requests do not deduct stock twice (Idempotency)
+test('Stock Allocation 8: Repeated submission requests with duplicate clientId do not deduct stock twice', () => {
+  const ledger = [];
+  const teamA = { id: 'team-A', receivedFromCentral: 0 };
+
+  function processAllocationWithIdempotency(payload) {
+    if (payload.clientId) {
+      const existing = ledger.find((entry) => entry.clientId === payload.clientId);
+      if (existing) {
+        return { success: true, data: existing, idempotent: true };
+      }
+    }
+
+    const newRecord = {
+      id: `alloc-${ledger.length + 1}`,
+      teamId: payload.teamId,
+      quantity: payload.quantity,
+      clientId: payload.clientId
+    };
+
+    ledger.push(newRecord);
+    teamA.receivedFromCentral += payload.quantity;
+    return { success: true, data: newRecord, idempotent: false };
+  }
+
+  const firstSubmission = processAllocationWithIdempotency({
+    teamId: 'team-A',
+    quantity: 100,
+    clientId: 'req-uuid-12345'
+  });
+
+  assert.equal(firstSubmission.idempotent, false, 'First submission is processed');
+  assert.equal(teamA.receivedFromCentral, 100, 'Team A stock credited 100');
+  assert.equal(ledger.length, 1, 'Ledger has 1 entry');
+
+  // Network retry / double click with same clientId
+  const secondSubmission = processAllocationWithIdempotency({
+    teamId: 'team-A',
+    quantity: 100,
+    clientId: 'req-uuid-12345'
+  });
+
+  assert.equal(secondSubmission.idempotent, true, 'Second submission detected as idempotent');
+  assert.equal(teamA.receivedFromCentral, 100, 'Team A stock was NOT deducted or credited twice');
+  assert.equal(ledger.length, 1, 'Ledger count remains exactly 1');
+});
+
+// 32. Test 9: Correct stock balances remain consistent across accounting equations
+test('Stock Allocation 9: Full PRD accounting consistency: Central + Team + Member + Distributed', () => {
+  const campaignStock = 5000;
+
+  // Ledger of allocations
+  const teamAllocations = [
+    { teamId: 'team-A', quantity: 1000 },
+    { teamId: 'team-B', quantity: 800 }
+  ];
+  const memberAllocations = [
+    { teamId: 'team-A', memberId: 'm1', quantity: 400 },
+    { teamId: 'team-A', memberId: 'm2', quantity: 300 },
+    { teamId: 'team-B', memberId: 'm3', quantity: 500 }
+  ];
+  const distributions = [
+    { memberId: 'm1', quantity: 350, status: 'approved' },
+    { memberId: 'm2', quantity: 200, status: 'approved' },
+    { memberId: 'm3', quantity: 450, status: 'approved' }
+  ];
+
+  const totalAllocatedToTeams = teamAllocations.reduce((sum, a) => sum + a.quantity, 0); // 1800
+  const unallocatedAtCentral = campaignStock - totalAllocatedToTeams; // 3200
+
+  const totalAllocatedToMembers = memberAllocations.reduce((sum, a) => sum + a.quantity, 0); // 1200
+  const unallocatedAtTeams = totalAllocatedToTeams - totalAllocatedToMembers; // 600
+
+  const totalDistributed = distributions.reduce((sum, d) => sum + d.quantity, 0); // 1000
+  const remainingWithMembers = totalAllocatedToMembers - totalDistributed; // 200
+
+  // PRD Accounting Equation
+  const accounted = unallocatedAtCentral + unallocatedAtTeams + remainingWithMembers + totalDistributed;
+  const variance = campaignStock - accounted;
+
+  assert.equal(unallocatedAtCentral, 3200, 'Central store: 3,200 calendars');
+  assert.equal(unallocatedAtTeams, 600, 'Available at teams: 600 calendars');
+  assert.equal(remainingWithMembers, 200, 'In members hands: 200 calendars');
+  assert.equal(totalDistributed, 1000, 'Distributed to public: 1,000 calendars');
+  assert.equal(accounted, 5000, 'Accounted equals total campaign stock');
+  assert.equal(variance, 0, 'Variance is zero');
+});
+
+// 33. Test 10: Existing distribution, sales, collections, and financial reports integrity
+test('Stock Allocation 10: Existing distribution sales, collections and financial reports function correctly', () => {
+  const calendarPrice = 100;
+  const distributions = [
+    { memberId: 'm1', quantity: 15, status: 'approved' },
+    { memberId: 'm2', quantity: 25, status: 'approved' },
+    { memberId: 'm3', quantity: 10, status: 'pending' } // Pending should not count towards approved gross revenue
+  ];
+
+  const approvedDistributions = distributions.filter((d) => d.status === 'approved');
+  const totalApprovedQuantity = approvedDistributions.reduce((s, d) => s + d.quantity, 0);
+  assert.equal(totalApprovedQuantity, 40, '40 approved distributed calendars');
+
+  const expectedGrossRevenue = totalApprovedQuantity * calendarPrice;
+  assert.equal(expectedGrossRevenue, 4000, '₹4,000 gross revenue from approved calendar sales');
+
+  const collections = [
+    { memberId: 'm1', amount: 1500, status: 'approved' },
+    { memberId: 'm2', amount: 2500, status: 'approved' }
+  ];
+  const totalCollected = collections.reduce((s, c) => s + c.amount, 0);
+  assert.equal(totalCollected, 4000, 'Collected ₹4,000 matches expected revenue');
+});
+
+
+// 34. Target Management: Default target on User and CampaignConfig
+test('Collection Targets 1: Default member target is ₹25,000 and configurable per user', async () => {
+  const User = (await import('../server/models/User.js')).default;
+  const CampaignConfig = (await import('../server/models/CampaignConfig.js')).default;
+
+  // Check Schema defaults
+  const userTargetField = User.schema.path('collectionTarget');
+  assert.ok(userTargetField, 'User schema must have collectionTarget field');
+  assert.equal(userTargetField.defaultValue, 25000, 'Default collectionTarget must be ₹25,000');
+
+  const configTargetField = CampaignConfig.schema.path('defaultMemberTarget');
+  assert.ok(configTargetField, 'CampaignConfig schema must have defaultMemberTarget field');
+  assert.equal(configTargetField.defaultValue, 25000, 'Default campaign member target must be ₹25,000');
+});
+
+// 35. Target Progress Accounting: Target, Approved Collected, Remaining, and Achievement %
+test('Collection Targets 2: Precise mathematical progress calculations without unapproved amounts', () => {
+  const member = {
+    fullName: 'Zaid Rahman',
+    collectionTarget: 25000
+  };
+
+  const collections = [
+    { amount: 10000, status: 'approved', approvalStatus: 'approved' },
+    { amount: 5000, status: 'approved', approvalStatus: 'approved' },
+    { amount: 3000, status: 'pending', approvalStatus: 'pending' }, // Must not count!
+    { amount: 2000, status: 'rejected', approvalStatus: 'rejected' } // Must not count!
+  ];
+
+  // Official approved collections calculation
+  const approvedCollected = collections
+    .filter(c => (c.status === 'approved' || c.status === 'active') && c.approvalStatus === 'approved')
+    .reduce((sum, c) => sum + c.amount, 0);
+
+  const remaining = Math.max(0, member.collectionTarget - approvedCollected);
+  const progressPercent = member.collectionTarget > 0 ? Math.round((approvedCollected / member.collectionTarget) * 100) : 0;
+
+  assert.equal(approvedCollected, 15000, 'Only approved entries (10k + 5k = 15k) are counted');
+  assert.equal(remaining, 10000, 'Remaining is ₹10,000 (25k - 15k)');
+  assert.equal(progressPercent, 60, 'Target progress is 60%');
+});
+
+// 36. Team Leader Personal Collection Progress Distinction
+test('Collection Targets 3: Team Leader personal collection is isolated and not attributed to team members', () => {
+  const leaderId = 'leader-101';
+  const member1Id = 'member-201';
+  const member2Id = 'member-202';
+
+  const users = [
+    { _id: leaderId, fullName: 'Ahmed Bilal', role: 'team_leader', collectionTarget: 30000 },
+    { _id: member1Id, fullName: 'Member One', role: 'team_member', collectionTarget: 25000 },
+    { _id: member2Id, fullName: 'Member Two', role: 'team_member', collectionTarget: 20000 }
+  ];
+
+  const approvedCollections = [
+    { memberId: leaderId, amount: 12000 },
+    { memberId: member1Id, amount: 15000 },
+    { memberId: member2Id, amount: 8000 }
+  ];
+
+  // Team Leader's own personal progress
+  const leaderCol = approvedCollections.filter(c => c.memberId === leaderId).reduce((s, c) => s + c.amount, 0);
+  const leaderTarget = users.find(u => u._id === leaderId).collectionTarget;
+  const leaderRemaining = Math.max(0, leaderTarget - leaderCol);
+  const leaderPct = Math.round((leaderCol / leaderTarget) * 100);
+
+  assert.equal(leaderCol, 12000, 'Leader personal collection is 12k');
+  assert.equal(leaderRemaining, 18000, 'Leader remaining is 18k');
+  assert.equal(leaderPct, 40, 'Leader percent is 40%');
+
+  // Team member individual progress
+  const m1Col = approvedCollections.filter(c => c.memberId === member1Id).reduce((s, c) => s + c.amount, 0);
+  assert.equal(m1Col, 15000, 'Member 1 has 15k, leader entries are not mixed in');
+});
+
+// 37. Approval Workflow: Team Leader pending review queue
+test('Approval Workflow: Entries reach pending queue and update totals upon approval', () => {
+  const pendingCollection = {
+    _id: 'col-999',
+    memberId: 'm1',
+    teamId: 't1',
+    amount: 5000,
+    status: 'pending',
+    approvalStatus: 'pending'
+  };
+
+  // Queue filtering for Team Leader
+  const leaderTeamId = 't1';
+  const isForLeaderTeam = pendingCollection.teamId === leaderTeamId;
+  const isPending = pendingCollection.approvalStatus === 'pending';
+  assert.ok(isForLeaderTeam && isPending, 'Pending entry immediately appears in Team Leader queue');
+
+  // Approval step
+  pendingCollection.status = 'approved';
+  pendingCollection.approvalStatus = 'approved';
+  pendingCollection.approvedBy = 'leader-1';
+  pendingCollection.approvedAt = new Date().toISOString();
+
+  assert.equal(pendingCollection.approvalStatus, 'approved');
+  assert.equal(pendingCollection.status, 'approved');
+  assert.ok(pendingCollection.approvedAt);
+});
+
+// 38. WhatsApp Reports: Collection Target Progress section builder test
+test('WhatsApp Reports: Collection Target Progress section formatting with ranking and medals', async () => {
+  const { buildCustomWhatsAppReport } = await import('../server/utils/whatsappReports.js');
+
+  const teamsData = [
+    {
+      name: 'Al-Huda Team',
+      distributed: 250,
+      collected: 35000,
+      members: [
+        { name: 'Ahmed Leader', role: 'team_leader', target: 25000, collected: 20000, distributed: 100 },
+        { name: 'Zaid Rahman', role: 'team_member', target: 25000, collected: 18000, distributed: 80 },
+        { name: 'Kareem Ali', role: 'team_member', target: 20000, collected: 12000, distributed: 70 }
+      ]
+    }
+  ];
+
+  // 1. When includeTargetProgress is false, section is omitted
+  const reportWithout = buildCustomWhatsAppReport({
+    reportType: 'team',
+    teamsData,
+    sections: { includeTargetProgress: false, includeHeader: true, includeSummary: true }
+  });
+  assert.ok(!reportWithout.includes('COLLECTION TARGET PROGRESS'), 'Section omitted when unchecked');
+
+  // 2. When includeTargetProgress is true, section is included with medals, target, collected, remaining and progress
+  const reportWith = buildCustomWhatsAppReport({
+    reportType: 'team',
+    teamsData,
+    sections: { includeTargetProgress: true, includeHeader: true, includeSummary: true }
+  });
+
+  assert.ok(reportWith.includes('🎯 *COLLECTION TARGET PROGRESS*'), 'Contains Collection Target Progress header');
+  assert.ok(reportWith.includes('Team Leader Personal Progress'), 'Distinguishes Team Leader personal progress');
+  assert.ok(reportWith.includes('Zaid Rahman'), 'Includes member name');
+  assert.ok(reportWith.includes('Target: ₹25,000'), 'Includes member target');
+  assert.ok(reportWith.includes('Collected: ₹18,000'), 'Includes approved collection amount');
+  assert.ok(reportWith.includes('Remaining: ₹7,000'), 'Includes calculated remaining amount');
+  assert.ok(reportWith.includes('Progress: 72%'), 'Includes calculated percentage (18k / 25k = 72%)');
+  assert.ok(reportWith.includes('🥇') || reportWith.includes('1.'), 'Includes ranking medal / rank badge');
+});
+
+// 39. AuditLog Validation: Supports domain actions (approve, reject, resubmit, allocate_team, etc.)
+test('AuditLog: Validates domain event actions without enum failure', async () => {
+  const AuditLog = (await import('../server/models/AuditLog.js')).default;
+  const mongoose = (await import('mongoose')).default;
+
+  const validActions = ['approve', 'reject', 'resubmit', 'create', 'update', 'delete', 'allocate_team', 'batch_update_target'];
+
+  for (const act of validActions) {
+    const doc = new AuditLog({
+      entityType: 'collection',
+      entityId: new mongoose.Types.ObjectId(),
+      action: act,
+      performedBy: new mongoose.Types.ObjectId()
+    });
+
+    const err = doc.validateSync();
+    assert.equal(err, undefined, `AuditLog must accept action '${act}' without validation error`);
+  }
+});

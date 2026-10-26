@@ -1,4 +1,5 @@
 import express from 'express';
+import mongoose from 'mongoose';
 import Distribution from '../models/Distribution.js';
 import Collection from '../models/Collection.js';
 import MoneyTransfer from '../models/MoneyTransfer.js';
@@ -108,6 +109,7 @@ router.get('/whatsapp-summary', async (req, res) => {
       includeTopPerformers: true,
       includeHandoverStatus: true,
       includeProgressBar: true,
+      includeTargetProgress: false,
       includeZeroActivity: false,
       includeOfflineNotice: true,
       includeFooter: true
@@ -129,6 +131,7 @@ router.get('/whatsapp-summary', async (req, res) => {
       'includeTopPerformers',
       'includeHandoverStatus',
       'includeProgressBar',
+      'includeTargetProgress',
       'includeZeroActivity',
       'includeOfflineNotice',
       'includeFooter'
@@ -206,22 +209,19 @@ router.get('/whatsapp-summary', async (req, res) => {
     const transMatch = { status: 'confirmed' };
 
     if (scopedTeamId) {
-      const mongooseModule = (await import('mongoose')).default;
-      const teamObjId = new mongooseModule.Types.ObjectId(scopedTeamId);
+      const teamObjId = new mongoose.Types.ObjectId(scopedTeamId);
       distMatch.$and.push({ teamId: teamObjId });
       colMatch.$and.push({ teamId: teamObjId });
       transMatch.teamId = teamObjId;
     }
     if (scopedMemberId) {
-      const mongooseModule = (await import('mongoose')).default;
-      const memberObjId = new mongooseModule.Types.ObjectId(scopedMemberId);
+      const memberObjId = new mongoose.Types.ObjectId(scopedMemberId);
       distMatch.$and.push({ memberId: memberObjId });
       colMatch.$and.push({ memberId: memberObjId });
       transMatch.fromUserId = memberObjId;
     }
     if (areaId && isValidObjectId(areaId)) {
-      const mongooseModule = (await import('mongoose')).default;
-      const areaObjId = new mongooseModule.Types.ObjectId(areaId);
+      const areaObjId = new mongoose.Types.ObjectId(areaId);
       distMatch.$and.push({ areaId: areaObjId });
       colMatch.$and.push({ areaId: areaObjId });
     }
@@ -276,7 +276,7 @@ router.get('/whatsapp-summary', async (req, res) => {
       : allTeams;
 
     const teamIds = relevantTeams.map(t => t._id);
-    const usersInTeams = await User.find({ teamId: { $in: teamIds } }).select('fullName phone teamId');
+    const usersInTeams = await User.find({ teamId: { $in: teamIds } }).select('fullName phone teamId role collectionTarget');
 
     const [memberDistAgg, memberColAgg] = await Promise.all([
       Distribution.aggregate([
@@ -301,6 +301,8 @@ router.get('/whatsapp-summary', async (req, res) => {
         return {
           id: u._id,
           name: u.fullName,
+          role: u.role,
+          target: u.collectionTarget !== undefined && u.collectionTarget !== null ? u.collectionTarget : 25000,
           distributed: memberDistMap.get(uIdStr) || 0,
           collected: memberColMap.get(uIdStr) || 0
         };
@@ -353,7 +355,7 @@ router.get('/whatsapp-summary', async (req, res) => {
           membersCount
         },
         sections: parsedSections,
-        itemCount: items.length
+        itemCount: teamsData.reduce((sum, t) => sum + (t.members ? t.members.length : 0), 0)
       }
     });
   } catch (err) {

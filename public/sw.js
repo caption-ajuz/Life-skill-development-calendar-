@@ -1,5 +1,5 @@
-// Service Worker v7.0 - Life Skill Course PWA (Network-first for code, full offline app shell)
-const CACHE_VERSION = 'lsc-v7';
+// Service Worker v9.0 - Life Skill Course PWA (Network-first for code, full offline app shell)
+const CACHE_VERSION = 'lsc-v9';
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const API_CACHE = `${CACHE_VERSION}-api`;
 
@@ -34,6 +34,7 @@ const APP_SHELL = [
   '/src/store/auth.js',
   '/src/services/api.js',
   '/src/services/db.js',
+  '/src/services/pwa.js',
   '/src/services/sync.js',
   '/src/utils/format.js',
   '/src/utils/image.js'
@@ -105,11 +106,16 @@ self.addEventListener('fetch', (event) => {
             return response;
           })
           .catch(() => {
-            return cache.match(request).then((cached) => {
+            return cache.match(request, { ignoreSearch: true }).then((cached) => {
               if (cached) return cached;
               return new Response(
-                JSON.stringify({ success: false, error: 'Offline - local cache active' }),
-                { status: 503, headers: { 'Content-Type': 'application/json' } }
+                JSON.stringify({
+                  success: true,
+                  offline: true,
+                  data: null,
+                  message: 'Offline - local cache active'
+                }),
+                { status: 200, headers: { 'Content-Type': 'application/json' } }
               );
             });
           });
@@ -124,6 +130,8 @@ self.addEventListener('fetch', (event) => {
       url.pathname === '/' ||
       url.pathname.endsWith('.html') ||
       url.pathname.endsWith('.js') ||
+      request.mode === 'navigate' ||
+      request.destination === 'document' ||
       request.headers.get('accept')?.includes('text/html');
 
     if (isCodeOrHtml) {
@@ -141,8 +149,8 @@ self.addEventListener('fetch', (event) => {
           .catch(() => {
             return caches.match(request).then((cached) => {
               if (cached) return cached;
-              if (request.headers.get('accept')?.includes('text/html')) {
-                return caches.match('/index.html');
+              if (request.mode === 'navigate' || request.destination === 'document' || request.headers.get('accept')?.includes('text/html')) {
+                return caches.match('/index.html').then((indexCached) => indexCached || caches.match('/'));
               }
               return new Response('Offline', { status: 503 });
             });

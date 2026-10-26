@@ -32,6 +32,7 @@ export default function Reports() {
   const [includeTopPerformers, setIncludeTopPerformers] = useState(true);
   const [includeBreakdown, setIncludeBreakdown] = useState(true);
   const [includeCollectionRanking, setIncludeCollectionRanking] = useState(false);
+  const [includeTargetProgress, setIncludeTargetProgress] = useState(false);
   const [includeHandoverStatus, setIncludeHandoverStatus] = useState(isSuperOrUsthad || isTeamLeader);
   const [includeZeroActivity, setIncludeZeroActivity] = useState(false);
   const [includeOfflineNotice, setIncludeOfflineNotice] = useState(true);
@@ -85,6 +86,7 @@ export default function Reports() {
       setIncludeProgressBar(reportType === 'overall');
       setIncludeTopPerformers(reportType === 'daily' || reportType === 'overall');
       setIncludeBreakdown(true);
+      setIncludeTargetProgress(false);
       setIncludeHandoverStatus(isSuperOrUsthad || isTeamLeader);
       setIncludeZeroActivity(false);
       setIncludeOfflineNotice(true);
@@ -95,6 +97,7 @@ export default function Reports() {
       setIncludeProgressBar(true);
       setIncludeTopPerformers(false);
       setIncludeBreakdown(false);
+      setIncludeTargetProgress(false);
       setIncludeHandoverStatus(isSuperOrUsthad || isTeamLeader);
       setIncludeZeroActivity(false);
       setIncludeOfflineNotice(false);
@@ -105,6 +108,7 @@ export default function Reports() {
       setIncludeProgressBar(true);
       setIncludeTopPerformers(true);
       setIncludeBreakdown(true);
+      setIncludeTargetProgress(true);
       setIncludeHandoverStatus(isSuperOrUsthad || isTeamLeader);
       setIncludeZeroActivity(true);
       setIncludeOfflineNotice(true);
@@ -115,6 +119,7 @@ export default function Reports() {
       setIncludeProgressBar(false);
       setIncludeTopPerformers(false);
       setIncludeBreakdown(true);
+      setIncludeTargetProgress(false);
       setIncludeHandoverStatus(false);
       setIncludeZeroActivity(false);
       setIncludeOfflineNotice(false);
@@ -157,6 +162,7 @@ export default function Reports() {
         includeBreakdown: includeBreakdown ? 'true' : 'false',
         includeLeaderboard: includeBreakdown ? 'true' : 'false',
         includeCollectionRanking: includeCollectionRanking ? 'true' : 'false',
+        includeTargetProgress: includeTargetProgress ? 'true' : 'false',
         includeHandoverStatus: includeHandoverStatus ? 'true' : 'false',
         includeZeroActivity: includeZeroActivity ? 'true' : 'false',
         includeOfflineNotice: includeOfflineNotice ? 'true' : 'false',
@@ -189,22 +195,55 @@ export default function Reports() {
       if (res && res.success && res.text) {
         setWhatsappText(res.text);
         setReportMetadata(res.metadata || null);
+        try {
+          await db.cacheData('last_whatsapp_report', { text: res.text, metadata: res.metadata });
+        } catch (_) {}
       } else {
-        setWhatsappText('Failed to generate summary.');
+        // Fallback to locally cached report if available
+        const cached = await db.getCachedData('last_whatsapp_report').catch(() => null);
+        if (cached && cached.data && cached.data.text) {
+          setWhatsappText(cached.data.text);
+          setReportMetadata(cached.data.metadata || null);
+        } else {
+          setWhatsappText('📅 *LIFE SKILL COURSE — CALENDAR CAMP*\n\n_⚠️ Offline mode active. Connect to internet for live report updates._');
+        }
       }
     } catch (err) {
-      console.error('WhatsApp report generation error:', err);
-      if (window.showToast) window.showToast('Failed to load WhatsApp report.', 'error');
+      const isOffline = err.message && (
+        err.message.includes('Offline') ||
+        err.message.includes('offline') ||
+        err.message.includes('local cache') ||
+        err.message.includes('timed out') ||
+        err.message.includes('fetch')
+      );
+      if (isOffline) {
+        console.warn('WhatsApp report generation notice (offline/cache):', err.message);
+        const cached = await db.getCachedData('last_whatsapp_report').catch(() => null);
+        if (cached && cached.data && cached.data.text) {
+          setWhatsappText(cached.data.text);
+          setReportMetadata(cached.data.metadata || null);
+        } else {
+          setWhatsappText('📅 *LIFE SKILL COURSE — CALENDAR CAMP*\n\n_⚠️ Offline mode active. Connect to internet for live report updates._');
+        }
+        if (window.showToast) window.showToast('Offline mode active. Showing cached report.', 'info');
+      } else {
+        console.error('WhatsApp report generation error:', err);
+        if (window.showToast) window.showToast('Failed to load WhatsApp report.', 'error');
+      }
     } finally {
       setLoadingWa(false);
     }
   };
 
-  // Automatically update preview when WhatsApp options change
+  // Automatically update preview when WhatsApp options change (debounced)
   useEffect(() => {
-    if (activeTab === 'whatsapp') {
+    if (activeTab !== 'whatsapp') return;
+
+    const timer = setTimeout(() => {
       generateWhatsAppReport();
-    }
+    }, 300);
+
+    return () => clearTimeout(timer);
   }, [
     reportType,
     dateScope,
@@ -220,6 +259,7 @@ export default function Reports() {
     includeTopPerformers,
     includeBreakdown,
     includeCollectionRanking,
+    includeTargetProgress,
     includeHandoverStatus,
     includeZeroActivity,
     includeOfflineNotice,
@@ -772,6 +812,17 @@ export default function Reports() {
                     onChange=${(e) => setIncludeCollectionRanking(e.target.checked)}
                   />
                   <span>Collection Ranking (₹ Highest to Lowest)</span>
+                </label>
+              ` : ''}
+
+              ${(isSuperOrUsthad || isTeamLeader) ? html`
+                <label style="display: flex; align-items: center; gap: 7px; padding: 6px 8px; border: 1px solid #10b981; border-radius: 6px; cursor: pointer; background: #ecfdf5;">
+                  <input
+                    type="checkbox"
+                    checked=${includeTargetProgress}
+                    onChange=${(e) => setIncludeTargetProgress(e.target.checked)}
+                  />
+                  <span style="font-weight: 600; color: #065f46;">🎯 Collection Target Progress</span>
                 </label>
               ` : ''}
 

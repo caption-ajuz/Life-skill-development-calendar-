@@ -64,10 +64,35 @@ router.get('/', async (req, res) => {
       User.countDocuments(query)
     ]);
 
+    const userIds = users.map((u) => u._id);
+    const [allocsByUser, distsByUser] = await Promise.all([
+      StockAllocation.aggregate([
+        { $match: { memberId: { $in: userIds } } },
+        { $group: { _id: '$memberId', total: { $sum: '$quantity' } } }
+      ]),
+      Distribution.aggregate([
+        { $match: { memberId: { $in: userIds }, status: { $in: ['active', 'approved'] } } },
+        { $group: { _id: '$memberId', total: { $sum: '$quantity' } } }
+      ])
+    ]);
+
+    const allocMap = new Map(allocsByUser.map((a) => [a._id.toString(), a.total]));
+    const distMap = new Map(distsByUser.map((d) => [d._id.toString(), d.total]));
+
+    const usersWithStock = users.map((u) => {
+      const uObj = u.toObject();
+      const allocated = allocMap.get(u._id.toString()) || 0;
+      const distributed = distMap.get(u._id.toString()) || 0;
+      uObj.allocatedStock = allocated;
+      uObj.distributedStock = distributed;
+      uObj.remainingStock = Math.max(0, allocated - distributed);
+      return uObj;
+    });
+
     return res.json({
       success: true,
       data: {
-        users,
+        users: usersWithStock,
         pagination: {
           total,
           page: pageNum,
@@ -237,17 +262,20 @@ router.get('/:id/profile', async (req, res) => {
       recentTransfers,
       recentExpenses
     ] = await Promise.all([
-      teamId ? StockAllocation.findOne({ teamId, memberId: targetUser._id }) : null,
+      StockAllocation.aggregate([
+        { $match: { memberId: targetUser._id } },
+        { $group: { _id: null, total: { $sum: '$quantity' } } }
+      ]),
       Distribution.aggregate([
-        { $match: { memberId: targetUser._id, status: 'active' } },
+        { $match: { memberId: targetUser._id, status: { $in: ['active', 'approved'] } } },
         { $group: { _id: null, total: { $sum: '$quantity' } } }
       ]),
       Collection.aggregate([
-        { $match: { memberId: targetUser._id, status: 'active', incomeType: { $ne: 'other_income' } } },
+        { $match: { memberId: targetUser._id, status: { $in: ['active', 'approved'] }, incomeType: { $ne: 'other_income' } } },
         { $group: { _id: null, total: { $sum: '$amount' } } }
       ]),
       Collection.aggregate([
-        { $match: { memberId: targetUser._id, status: 'active', incomeType: 'other_income' } },
+        { $match: { memberId: targetUser._id, status: { $in: ['active', 'approved'] }, incomeType: 'other_income' } },
         { $group: { _id: null, total: { $sum: '$amount' } } }
       ]),
       MoneyTransfer.aggregate([
@@ -342,8 +370,8 @@ router.put('/:id', async (req, res) => {
       }
     }
 
-    const { fullName, phone, role, teamId } = req.body;
-    const oldValues = { fullName: user.fullName, phone: user.phone, role: user.role, teamId: user.teamId };
+    const { fullName, phone, role, teamId, collectionTarget } = req.body;
+    const oldValues = { fullName: user.fullName, phone: user.phone, role: user.role, teamId: user.teamId, collectionTarget: user.collectionTarget };
 
     if (fullName !== undefined) {
       if (typeof fullName !== 'string' || !fullName.trim() || fullName.trim().length > 100) {
@@ -363,7 +391,7 @@ router.put('/:id', async (req, res) => {
       user.phone = normalizedPhone;
     }
 
-    // Role and team reassignment are strictly super_admin privileges
+    // Role, team reassignment, and collection target are strictly super_admin privileges
     if (isSuperAdmin) {
       if (role && ['super_admin', 'usthad', 'team_leader', 'team_member'].includes(role)) {
         if (user._id.toString() === req.user._id.toString() && role !== 'super_admin') {
@@ -373,6 +401,13 @@ router.put('/:id', async (req, res) => {
       }
       if (teamId !== undefined) {
         user.teamId = isValidObjectId(teamId) ? teamId : null;
+      }
+      if (collectionTarget !== undefined) {
+        const targetNum = Number(collectionTarget);
+        if (isNaN(targetNum) || targetNum < 0) {
+          return res.status(400).json({ success: false, error: 'Collection target must be a non-negative number.' });
+        }
+        user.collectionTarget = Math.round(targetNum);
       }
     }
 
@@ -395,6 +430,92 @@ router.put('/:id', async (req, res) => {
   } catch (err) {
     console.error('Update user error:', err);
     return res.status(500).json({ success: false, error: 'Failed to update user.' });
+  }
+});
+
+// PUT /api/users/:id/target - Super Admin sets individual collection target
+router.put('/:id/target', requireRole('super_admin'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { target } = req.body;
+    if (!isValidObjectId(id)) {
+      return res.status(400).json({ success: false, error: 'Invalid user ID.' });
+    }
+    const targetNum = Number(target);
+    if (isNaN(targetNum) || targetNum < 0) {
+      return res.status(400).json({ success: false, error: 'Target amount must be a non-negative number.' });
+    }
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found.' });
+    }
+    const oldTarget = user.collectionTarget || 25000;
+    user.collectionTarget = Math.round(targetNum);
+    await user.save();
+
+    await logAudit({
+      entityType: 'user',
+      entityId: user._id,
+      action: 'update_target',
+      oldValues: { collectionTarget: oldTarget },
+      newValues: { collectionTarget: user.collectionTarget },
+      performedBy: req.user._id,
+      ipAddress: req.ip
+    });
+
+    return res.json({
+      success: true,
+      message: `Collection target updated to ₹${user.collectionTarget.toLocaleString('en-IN')}`,
+      data: user.toJSON()
+    });
+  } catch (err) {
+    console.error('Update user target error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to update collection target.' });
+  }
+});
+
+// POST /api/users/batch-target - Super Admin sets overall member target across all members
+router.post('/batch-target', requireRole('super_admin'), async (req, res) => {
+  try {
+    const { overallTarget, targetRole = 'team_member', applyToLeaders = false } = req.body;
+    const targetNum = Number(overallTarget);
+    if (isNaN(targetNum) || targetNum <= 0) {
+      return res.status(400).json({ success: false, error: 'Overall target must be a positive number.' });
+    }
+
+    const CampaignConfig = (await import('../models/CampaignConfig.js')).default;
+    let config = await CampaignConfig.findOne();
+    if (config) {
+      config.defaultMemberTarget = Math.round(targetNum);
+      await config.save();
+    }
+
+    const rolesToUpdate = applyToLeaders ? ['team_member', 'team_leader'] : ['team_member'];
+    const result = await User.updateMany(
+      { role: { $in: rolesToUpdate }, isActive: true },
+      { $set: { collectionTarget: Math.round(targetNum) } }
+    );
+
+    await logAudit({
+      entityType: 'campaign_config',
+      entityId: config ? config._id : req.user._id,
+      action: 'batch_update_target',
+      newValues: { overallTarget: Math.round(targetNum), updatedCount: result.modifiedCount, roles: rolesToUpdate },
+      performedBy: req.user._id,
+      ipAddress: req.ip
+    });
+
+    return res.json({
+      success: true,
+      message: `Overall target set to ₹${Math.round(targetNum).toLocaleString('en-IN')}. Updated ${result.modifiedCount} participant(s).`,
+      data: {
+        overallTarget: Math.round(targetNum),
+        updatedCount: result.modifiedCount
+      }
+    });
+  } catch (err) {
+    console.error('Batch update target error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to set overall collection target.' });
   }
 });
 

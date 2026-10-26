@@ -141,7 +141,7 @@ router.get('/admin', requireRole('super_admin', 'usthad'), async (req, res) => {
   }
 });
 
-// GET /api/dashboard/team/:teamId - Team Leader view
+// GET /api/dashboard/team/:teamId - Team Leader view with team progress, personal progress, and pending approvals
 router.get('/team/:teamId', async (req, res) => {
   try {
     const { teamId } = req.params;
@@ -156,40 +156,58 @@ router.get('/team/:teamId', async (req, res) => {
       }
     }
 
+    const mongooseModule = (await import('mongoose')).default;
+    const teamObjId = new mongooseModule.Types.ObjectId(teamId);
+
     const [
       team,
-      teamStock,
+      teamStockAgg,
       memberStockAgg,
       distAgg,
       colAgg,
       transferConfirmedAgg,
       transferPendingAgg,
       members,
+      pendingCollections,
+      pendingDistributions,
       pendingCorrections
     ] = await Promise.all([
       Team.findById(teamId),
-      StockAllocation.findOne({ teamId, memberId: null }),
       StockAllocation.aggregate([
-        { $match: { teamId: new (await import('mongoose')).default.Types.ObjectId(teamId), memberId: { $ne: null } } },
+        { $match: { teamId: teamObjId, memberId: null } },
+        { $group: { _id: null, total: { $sum: '$quantity' } } }
+      ]),
+      StockAllocation.aggregate([
+        { $match: { teamId: teamObjId, memberId: { $ne: null } } },
         { $group: { _id: null, total: { $sum: '$quantity' } } }
       ]),
       Distribution.aggregate([
-        { $match: { teamId: new (await import('mongoose')).default.Types.ObjectId(teamId), status: 'active' } },
+        { $match: { teamId: teamObjId, status: { $in: ['active', 'approved'] }, approvalStatus: { $ne: 'rejected' } } },
         { $group: { _id: null, total: { $sum: '$quantity' } } }
       ]),
       Collection.aggregate([
-        { $match: { teamId: new (await import('mongoose')).default.Types.ObjectId(teamId), status: 'active' } },
+        { $match: { teamId: teamObjId, status: { $in: ['active', 'approved'] }, approvalStatus: { $ne: 'rejected' } } },
         { $group: { _id: null, total: { $sum: '$amount' } } }
       ]),
       MoneyTransfer.aggregate([
-        { $match: { teamId: new (await import('mongoose')).default.Types.ObjectId(teamId), status: 'confirmed' } },
+        { $match: { teamId: teamObjId, status: 'confirmed' } },
         { $group: { _id: null, total: { $sum: '$amount' } } }
       ]),
       MoneyTransfer.aggregate([
-        { $match: { teamId: new (await import('mongoose')).default.Types.ObjectId(teamId), status: { $in: ['pending', 'awaiting_confirmation'] } } },
+        { $match: { teamId: teamObjId, status: { $in: ['pending', 'awaiting_confirmation'] } } },
         { $group: { _id: null, total: { $sum: '$amount' } } }
       ]),
-      User.find({ teamId, isActive: true }).select('fullName role phone profilePhoto'),
+      User.find({ teamId: teamObjId, isActive: true }).select('fullName username role phone profilePhoto collectionTarget'),
+      Collection.find({ teamId: teamObjId, approvalStatus: 'pending' })
+        .populate('memberId', 'fullName username phone profilePhoto')
+        .populate('areaId', 'name district')
+        .sort({ date: -1, createdAt: -1 })
+        .limit(50),
+      Distribution.find({ teamId: teamObjId, approvalStatus: 'pending' })
+        .populate('memberId', 'fullName username phone profilePhoto')
+        .populate('areaId', 'name district')
+        .sort({ date: -1, createdAt: -1 })
+        .limit(50),
       Correction.countDocuments({ status: 'pending' })
     ]);
 
@@ -197,7 +215,7 @@ router.get('/team/:teamId', async (req, res) => {
       return res.status(404).json({ success: false, error: 'Team not found.' });
     }
 
-    const teamAllocated = teamStock ? teamStock.quantity : 0;
+    const teamAllocated = teamStockAgg[0] ? teamStockAgg[0].total : 0;
     const memberAllocated = memberStockAgg[0] ? memberStockAgg[0].total : 0;
     const totalDistributed = distAgg[0] ? distAgg[0].total : 0;
     const totalCollected = team.leaderEntersOverallCollection
@@ -206,32 +224,91 @@ router.get('/team/:teamId', async (req, res) => {
     const confirmedTransfers = transferConfirmedAgg[0] ? transferConfirmedAgg[0].total : 0;
     const pendingTransfers = transferPendingAgg[0] ? transferPendingAgg[0].total : 0;
 
-    // Member progress breakdown
+    // Leader's personal progress calculation
+    const leaderUser = members.find((m) => m.role === 'team_leader') || req.user;
+    let leaderPersonalProgress = null;
+    if (leaderUser) {
+      const leaderColAgg = await Collection.aggregate([
+        {
+          $match: {
+            memberId: leaderUser._id,
+            status: { $in: ['active', 'approved'] },
+            approvalStatus: { $ne: 'rejected' }
+          }
+        },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]);
+
+      const leaderCollected = leaderColAgg[0] ? leaderColAgg[0].total : 0;
+      const leaderTarget = leaderUser.collectionTarget || 25000;
+      const leaderRemaining = Math.max(0, leaderTarget - leaderCollected);
+      const leaderPercentage = leaderTarget > 0 ? Math.min(100, Math.round((leaderCollected / leaderTarget) * 100)) : 0;
+
+      leaderPersonalProgress = {
+        userId: leaderUser._id,
+        fullName: leaderUser.fullName,
+        target: leaderTarget,
+        approvedCollected: leaderCollected,
+        remaining: leaderRemaining,
+        progressPercent: leaderPercentage
+      };
+    }
+
+    // Individual Member Progress breakdown
     const memberProgress = await Promise.all(
       members.map(async (m) => {
         const [d, c, a] = await Promise.all([
           Distribution.aggregate([
-            { $match: { memberId: m._id, status: 'active' } },
+            { $match: { memberId: m._id, status: { $in: ['active', 'approved'] }, approvalStatus: { $ne: 'rejected' } } },
             { $group: { _id: null, total: { $sum: '$quantity' } } }
           ]),
           Collection.aggregate([
-            { $match: { memberId: m._id, status: 'active' } },
+            { $match: { memberId: m._id, status: { $in: ['active', 'approved'] }, approvalStatus: { $ne: 'rejected' } } },
             { $group: { _id: null, total: { $sum: '$amount' } } }
           ]),
-          StockAllocation.findOne({ teamId, memberId: m._id })
+          StockAllocation.aggregate([
+            { $match: { memberId: m._id } },
+            { $group: { _id: null, total: { $sum: '$quantity' } } }
+          ])
         ]);
+
+        const allocated = a[0] ? a[0].total : 0;
+        const distributed = d[0] ? d[0].total : 0;
+        const collected = c[0] ? c[0].total : 0;
+        const target = m.collectionTarget !== undefined && m.collectionTarget !== null ? m.collectionTarget : 25000;
+        const remainingToTarget = Math.max(0, target - collected);
+        const targetPercentage = target > 0 ? Math.min(100, Math.round((collected / target) * 100)) : 0;
+
         return {
           _id: m._id,
           fullName: m.fullName,
+          username: m.username,
           role: m.role,
           phone: m.phone,
           profilePhoto: m.profilePhoto,
-          allocated: a ? a.quantity : 0,
-          distributed: d[0] ? d[0].total : 0,
-          collected: c[0] ? c[0].total : 0
+          allocated,
+          distributed,
+          remainingStock: Math.max(0, allocated - distributed),
+          collected,
+          target,
+          remainingToTarget,
+          targetPercentage
         };
       })
     );
+
+    // Team collection target summary
+    const regularMembers = memberProgress.filter((m) => m.role === 'team_member');
+    const totalTeamTarget = memberProgress.reduce((sum, m) => sum + (m.target || 25000), 0);
+    const remainingTeamTarget = Math.max(0, totalTeamTarget - totalCollected);
+    const teamTargetPercentage = totalTeamTarget > 0 ? Math.min(100, Math.round((totalCollected / totalTeamTarget) * 100)) : 0;
+
+    const teamTargetSummary = {
+      totalTarget: totalTeamTarget,
+      totalCollected,
+      remaining: remainingTeamTarget,
+      progressPercent: teamTargetPercentage
+    };
 
     return res.json({
       success: true,
@@ -253,6 +330,13 @@ router.get('/team/:teamId', async (req, res) => {
         pendingTransfers,
         outstandingCollections: Math.max(0, totalCollected - confirmedTransfers - pendingTransfers),
         pendingCorrections,
+        pendingApprovals: {
+          collections: pendingCollections,
+          distributions: pendingDistributions,
+          total: pendingCollections.length + pendingDistributions.length
+        },
+        leaderPersonalProgress,
+        teamTargetSummary,
         memberProgress
       }
     });
@@ -279,16 +363,17 @@ router.get('/member/:memberId', async (req, res) => {
       return res.status(404).json({ success: false, error: 'Member not found.' });
     }
 
-    const teamId = member.teamId ? (member.teamId._id || member.teamId) : null;
-
-    const [stockAlloc, distAgg, colAgg, transferConfirmedAgg, transferPendingAgg, recentDist, recentCol, recentTransfers] = await Promise.all([
-      teamId ? StockAllocation.findOne({ teamId, memberId }) : null,
+    const [stockAllocAgg, distAgg, colAgg, transferConfirmedAgg, transferPendingAgg, recentDist, recentCol, recentTransfers] = await Promise.all([
+      StockAllocation.aggregate([
+        { $match: { memberId: member._id } },
+        { $group: { _id: null, total: { $sum: '$quantity' } } }
+      ]),
       Distribution.aggregate([
-        { $match: { memberId: member._id, status: 'active' } },
+        { $match: { memberId: member._id, status: { $in: ['active', 'approved'] }, approvalStatus: { $ne: 'rejected' } } },
         { $group: { _id: null, total: { $sum: '$quantity' } } }
       ]),
       Collection.aggregate([
-        { $match: { memberId: member._id, status: 'active' } },
+        { $match: { memberId: member._id, status: { $in: ['active', 'approved'] }, approvalStatus: { $ne: 'rejected' } } },
         { $group: { _id: null, total: { $sum: '$amount' } } }
       ]),
       MoneyTransfer.aggregate([
@@ -304,11 +389,15 @@ router.get('/member/:memberId', async (req, res) => {
       MoneyTransfer.find({ fromUserId: member._id }).sort({ transferDate: -1 }).limit(5)
     ]);
 
-    const allocatedStock = stockAlloc ? stockAlloc.quantity : 0;
+    const allocatedStock = stockAllocAgg[0] ? stockAllocAgg[0].total : 0;
     const distributedStock = distAgg[0] ? distAgg[0].total : 0;
     const collectedAmount = colAgg[0] ? colAgg[0].total : 0;
     const confirmedTransfers = transferConfirmedAgg[0] ? transferConfirmedAgg[0].total : 0;
     const pendingTransfers = transferPendingAgg[0] ? transferPendingAgg[0].total : 0;
+
+    const collectionTarget = member.collectionTarget !== undefined && member.collectionTarget !== null ? member.collectionTarget : 25000;
+    const remainingToTarget = Math.max(0, collectionTarget - collectedAmount);
+    const targetPercentage = collectionTarget > 0 ? Math.min(100, Math.round((collectedAmount / collectionTarget) * 100)) : 0;
 
     return res.json({
       success: true,
@@ -325,6 +414,9 @@ router.get('/member/:memberId', async (req, res) => {
         distributedStock,
         remainingStock: Math.max(0, allocatedStock - distributedStock),
         collectedAmount,
+        collectionTarget,
+        remainingToTarget,
+        targetPercentage,
         confirmedTransfers,
         pendingTransfers,
         untransferredAmount: Math.max(0, collectedAmount - confirmedTransfers - pendingTransfers),

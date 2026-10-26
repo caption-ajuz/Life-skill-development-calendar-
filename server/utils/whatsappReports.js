@@ -186,6 +186,95 @@ export function buildCustomWhatsAppReport({
     }
   }
 
+  // 4. Optional Collection Target Progress Section
+  if (sections.includeTargetProgress && canViewFinancials) {
+    lines.push(`🎯 *COLLECTION TARGET PROGRESS*`);
+    lines.push(``);
+
+    if (teamsData && teamsData.length > 0) {
+      if (isSingleTeam) {
+        const team = teamsData[0];
+        const allMembers = team.members || [];
+        const leaderMember = allMembers.find((m) => m.role === 'team_leader');
+        const regularMembers = allMembers.filter((m) => m.role !== 'team_leader');
+
+        if (leaderMember) {
+          const lTarget = leaderMember.target !== undefined && leaderMember.target !== null ? leaderMember.target : 25000;
+          const lCollected = leaderMember.collected || 0;
+          const lRemaining = Math.max(0, lTarget - lCollected);
+          const lPct = lTarget > 0 ? Math.round((lCollected / lTarget) * 100) : 0;
+
+          lines.push(`👤 *Team Leader Personal Progress:*`);
+          lines.push(`*${leaderMember.name}*`);
+          lines.push(`- Target: ${formatINR(lTarget)}`);
+          lines.push(`- Collected: ${formatINR(lCollected)}`);
+          lines.push(`- Remaining: ${formatINR(lRemaining)}`);
+          lines.push(`- Progress: ${lPct}%`);
+          lines.push(``);
+        }
+
+        const rankedMembers = assignRanks(
+          regularMembers.map((m) => {
+            const target = m.target !== undefined && m.target !== null ? m.target : 25000;
+            const collected = m.collected || 0;
+            const remaining = Math.max(0, target - collected);
+            const progress = target > 0 ? Math.round((collected / target) * 100) : 0;
+            return { ...m, target, collected, remaining, progress };
+          }),
+          'collected'
+        );
+
+        if (rankedMembers.length === 0) {
+          lines.push(`_No team members listed for target tracking._`);
+          lines.push(``);
+        } else {
+          rankedMembers.forEach((m) => {
+            lines.push(`${getMedal(m.rank)}*${m.name}*`);
+            lines.push(`- Target: ${formatINR(m.target)}`);
+            lines.push(`- Collected: ${formatINR(m.collected)}`);
+            lines.push(`- Remaining: ${formatINR(m.remaining)}`);
+            lines.push(`- Progress: ${m.progress}%`);
+            lines.push(``);
+          });
+        }
+      } else {
+        // Super Admin / Campaign-wide: include authorized members across all teams
+        const allCampaignMembers = [];
+        teamsData.forEach((team) => {
+          (team.members || []).forEach((m) => {
+            const target = m.target !== undefined && m.target !== null ? m.target : 25000;
+            const collected = m.collected || 0;
+            const remaining = Math.max(0, target - collected);
+            const progress = target > 0 ? Math.round((collected / target) * 100) : 0;
+            allCampaignMembers.push({
+              ...m,
+              teamName: team.name,
+              target,
+              collected,
+              remaining,
+              progress
+            });
+          });
+        });
+
+        const rankedAll = assignRanks(allCampaignMembers, 'collected');
+        if (rankedAll.length === 0) {
+          lines.push(`_No member records available._`);
+          lines.push(``);
+        } else {
+          rankedAll.forEach((m) => {
+            lines.push(`${getMedal(m.rank)}*${m.name}* (${m.teamName})`);
+            lines.push(`- Target: ${formatINR(m.target)}`);
+            lines.push(`- Collected: ${formatINR(m.collected)}`);
+            lines.push(`- Remaining: ${formatINR(m.remaining)}`);
+            lines.push(`- Progress: ${m.progress}%`);
+            lines.push(``);
+          });
+        }
+      }
+    }
+  }
+
   // 4. Campaign Total or Team Total
   if (sections.includeSummary !== false) {
     const totalTitle = isSingleTeam ? `📌 *TEAM TOTAL*` : `📌 *CAMPAIGN TOTAL*`;

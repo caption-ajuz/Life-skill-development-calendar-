@@ -84,6 +84,50 @@ export default function Dashboard() {
     }
   };
 
+  const handleApproveCollection = async (id) => {
+    try {
+      await api.put(`/api/collections/${id}/approve`);
+      if (window.showToast) window.showToast('Collection approved! ✓', 'success');
+      loadDashboard();
+    } catch (err) {
+      if (window.showToast) window.showToast(err.message || 'Approval failed.', 'error');
+    }
+  };
+
+  const handleRejectCollection = async (id) => {
+    const reason = prompt('Reason for collection rejection:');
+    if (!reason || !reason.trim()) return;
+    try {
+      await api.put(`/api/collections/${id}/reject`, { reason: reason.trim() });
+      if (window.showToast) window.showToast('Collection rejected.', 'info');
+      loadDashboard();
+    } catch (err) {
+      if (window.showToast) window.showToast(err.message || 'Rejection failed.', 'error');
+    }
+  };
+
+  const handleApproveDistribution = async (id) => {
+    try {
+      await api.put(`/api/distributions/${id}/approve`);
+      if (window.showToast) window.showToast('Distribution approved! ✓', 'success');
+      loadDashboard();
+    } catch (err) {
+      if (window.showToast) window.showToast(err.message || 'Approval failed.', 'error');
+    }
+  };
+
+  const handleRejectDistribution = async (id) => {
+    const reason = prompt('Reason for distribution rejection:');
+    if (!reason || !reason.trim()) return;
+    try {
+      await api.put(`/api/distributions/${id}/reject`, { reason: reason.trim() });
+      if (window.showToast) window.showToast('Distribution rejected.', 'info');
+      loadDashboard();
+    } catch (err) {
+      if (window.showToast) window.showToast(err.message || 'Rejection failed.', 'error');
+    }
+  };
+
   const handleSaveCampaignConfig = async (e) => {
     e.preventDefault();
     setSavingCfg(true);
@@ -356,6 +400,10 @@ export default function Dashboard() {
   // Team Leader Dashboard View
   if (user.role === 'team_leader') {
     const d = data || {};
+    const pendingCols = (d.pendingApprovals && d.pendingApprovals.collections) || [];
+    const pendingDists = (d.pendingApprovals && d.pendingApprovals.distributions) || [];
+    const totalPending = (d.pendingApprovals && d.pendingApprovals.total) || (pendingCols.length + pendingDists.length);
+
     return html`
       <div class="page">
         <!-- Team Header Card -->
@@ -364,6 +412,123 @@ export default function Dashboard() {
           <div style="font-size: 19px; font-weight: 700; margin-top: 2px;">${d.team ? d.team.name : 'My Team'}</div>
           <div style="font-size: 12px; opacity: 0.8; margin-top: 4px;">Leader: ${user.fullName}</div>
         </div>
+
+        <!-- Pending Member Approvals Queue (CRITICAL REVIEW ACTION) -->
+        ${totalPending > 0 ? html`
+          <div class="card" style="border-left: 4px solid #f59e0b; background: #fffbeb;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <div style="font-weight: 700; color: #b45309; font-size: 14px;">
+                ⚠️ Pending Member Entries for Review (${totalPending})
+              </div>
+              <span class="badge badge-warning" style="font-weight: 700;">Action Required</span>
+            </div>
+            <p style="font-size: 12px; color: #92400e; margin-bottom: 10px;">
+              Your members have submitted entries requiring your approval. Approved entries instantly reflect on official totals and target progress.
+            </p>
+
+            ${pendingCols.length > 0 ? html`
+              <div style="font-size: 12px; font-weight: 700; color: #047857; margin-bottom: 6px;">
+                💰 Pending Collections (${pendingCols.length})
+              </div>
+              ${pendingCols.map((col) => html`
+                <div style="background: white; border: 1px solid #fde68a; border-radius: 8px; padding: 10px; margin-bottom: 8px;" key=${col._id}>
+                  <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 3px;">
+                    <b>${col.memberId ? col.memberId.fullName : 'Member'}</b>
+                    <b style="color: #059669; font-size: 14px;">${formatCurrency(col.amount)}</b>
+                  </div>
+                  <div style="font-size: 11.5px; color: var(--text-secondary); margin-bottom: 6px;">
+                    Area: ${col.areaId ? col.areaId.name : 'General'} • Date: ${formatDate(col.date)}
+                    ${col.notes ? html` • <i>"${col.notes}"</i>` : ''}
+                  </div>
+                  <div style="display: flex; gap: 8px;">
+                    <button
+                      class="btn btn-primary btn-sm"
+                      style="flex: 1; font-size: 11.5px; padding: 5px 8px; background: #059669; border-color: #059669;"
+                      onClick=${() => handleApproveCollection(col._id)}
+                    >
+                      ✓ Approve
+                    </button>
+                    <button
+                      class="btn btn-outline btn-sm"
+                      style="flex: 1; font-size: 11.5px; padding: 5px 8px; color: #dc2626; border-color: #fca5a5;"
+                      onClick=${() => handleRejectCollection(col._id)}
+                    >
+                      ✕ Reject
+                    </button>
+                  </div>
+                </div>
+              `)}
+            ` : ''}
+
+            ${pendingDists.length > 0 ? html`
+              <div style="font-size: 12px; font-weight: 700; color: #0891b2; margin-top: 10px; margin-bottom: 6px;">
+                📦 Pending Distributions (${pendingDists.length})
+              </div>
+              ${pendingDists.map((dist) => html`
+                <div style="background: white; border: 1px solid #fde68a; border-radius: 8px; padding: 10px; margin-bottom: 8px;" key=${dist._id}>
+                  <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 3px;">
+                    <b>${dist.memberId ? dist.memberId.fullName : 'Member'}</b>
+                    <span class="badge badge-info" style="font-weight: 700; font-size: 12px;">+${dist.quantity} Calendars</span>
+                  </div>
+                  <div style="font-size: 11.5px; color: var(--text-secondary); margin-bottom: 6px;">
+                    Area: ${dist.areaId ? dist.areaId.name : 'General'} • Date: ${formatDate(dist.date)}
+                    ${dist.notes ? html` • <i>"${dist.notes}"</i>` : ''}
+                  </div>
+                  <div style="display: flex; gap: 8px;">
+                    <button
+                      class="btn btn-primary btn-sm"
+                      style="flex: 1; font-size: 11.5px; padding: 5px 8px; background: #059669; border-color: #059669;"
+                      onClick=${() => handleApproveDistribution(dist._id)}
+                    >
+                      ✓ Approve
+                    </button>
+                    <button
+                      class="btn btn-outline btn-sm"
+                      style="flex: 1; font-size: 11.5px; padding: 5px 8px; color: #dc2626; border-color: #fca5a5;"
+                      onClick=${() => handleRejectDistribution(dist._id)}
+                    >
+                      ✕ Reject
+                    </button>
+                  </div>
+                </div>
+              `)}
+            ` : ''}
+          </div>
+        ` : ''}
+
+        <!-- Leader Personal Progress Card (Clearly distinguished from team totals) -->
+        ${d.leaderPersonalProgress ? html`
+          <div class="card" style="border-left: 4px solid #10b981; background: #f0fdf4;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <div style="font-weight: 700; color: #166534; font-size: 14px;">
+                👤 Team Leader Personal Collection Progress
+              </div>
+              <span class="badge badge-success" style="font-size: 11px; font-weight: 700;">
+                ${d.leaderPersonalProgress.progressPercent}% Achieved
+              </span>
+            </div>
+            <div style="font-size: 11.5px; color: #15803d; margin-bottom: 8px;">
+              Personal target and approved collections for ${d.leaderPersonalProgress.fullName} (managed distinctly from team summary).
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 8px; text-align: center;">
+              <div style="background: white; padding: 8px; border-radius: 6px; border: 1px solid #bbf7d0;">
+                <div style="font-size: 10.5px; color: var(--text-secondary);">Personal Target</div>
+                <div style="font-weight: 700; color: #1e293b; font-size: 13.5px;">${formatCurrency(d.leaderPersonalProgress.target)}</div>
+              </div>
+              <div style="background: white; padding: 8px; border-radius: 6px; border: 1px solid #bbf7d0;">
+                <div style="font-size: 10.5px; color: var(--text-secondary);">Approved Collected</div>
+                <div style="font-weight: 700; color: #059669; font-size: 13.5px;">${formatCurrency(d.leaderPersonalProgress.approvedCollected)}</div>
+              </div>
+              <div style="background: white; padding: 8px; border-radius: 6px; border: 1px solid #bbf7d0;">
+                <div style="font-size: 10.5px; color: var(--text-secondary);">Remaining to Goal</div>
+                <div style="font-weight: 700; color: #d97706; font-size: 13.5px;">${formatCurrency(d.leaderPersonalProgress.remaining)}</div>
+              </div>
+            </div>
+            <div style="height: 8px; background: #e2e8f0; border-radius: 4px; overflow: hidden;">
+              <div style="height: 100%; width: ${Math.min(100, d.leaderPersonalProgress.progressPercent)}%; background: #10b981;"></div>
+            </div>
+          </div>
+        ` : ''}
 
         <div class="stats-grid">
           <div class="stat-card">
@@ -389,25 +554,70 @@ export default function Dashboard() {
           <a href="#/transfers" class="btn btn-secondary" style="flex: 1; font-size: 13px;">Team Transfers</a>
         </div>
 
+        <!-- Team Target Summary Card -->
+        ${d.teamTargetSummary ? html`
+          <div class="card" style="border-top: 3px solid #0891b2;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <div class="card-title" style="margin-bottom: 0;">🎯 Team Collection Target Overview</div>
+              <span class="badge badge-info" style="font-weight: 700;">${d.teamTargetSummary.progressPercent}% of Team Target</span>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 8px; text-align: center;">
+              <div style="background: #f8fafc; padding: 8px; border-radius: 6px; border: 1px solid #e2e8f0;">
+                <div style="font-size: 10.5px; color: var(--text-secondary);">Team Target</div>
+                <div style="font-weight: 700; color: #1e293b; font-size: 13.5px;">${formatCurrency(d.teamTargetSummary.totalTarget)}</div>
+              </div>
+              <div style="background: #f8fafc; padding: 8px; border-radius: 6px; border: 1px solid #e2e8f0;">
+                <div style="font-size: 10.5px; color: var(--text-secondary);">Team Collected</div>
+                <div style="font-weight: 700; color: #059669; font-size: 13.5px;">${formatCurrency(d.teamTargetSummary.totalCollected)}</div>
+              </div>
+              <div style="background: #f8fafc; padding: 8px; border-radius: 6px; border: 1px solid #e2e8f0;">
+                <div style="font-size: 10.5px; color: var(--text-secondary);">Remaining</div>
+                <div style="font-weight: 700; color: #d97706; font-size: 13.5px;">${formatCurrency(d.teamTargetSummary.remaining)}</div>
+              </div>
+            </div>
+            <div style="height: 8px; background: #e2e8f0; border-radius: 4px; overflow: hidden;">
+              <div style="height: 100%; width: ${Math.min(100, d.teamTargetSummary.progressPercent)}%; background: linear-gradient(90deg, #0891b2, #10b981);"></div>
+            </div>
+          </div>
+        ` : ''}
+
         <!-- Member Progress Table -->
         <div class="card">
           <div class="card-title">Member Progress (${d.memberProgress ? d.memberProgress.length : 0})</div>
           ${(d.memberProgress || []).map((m) => {
-            const pct = m.allocated > 0 ? Math.min(100, Math.round((m.distributed / m.allocated) * 100)) : 0;
+            const stockPct = m.allocated > 0 ? Math.min(100, Math.round((m.distributed / m.allocated) * 100)) : 0;
+            const targetPct = m.targetPercentage || (m.target > 0 ? Math.min(100, Math.round((m.collected / m.target) * 100)) : 0);
             return html`
-              <div class="list-item" key=${m._id}>
-                <div class="list-avatar">
+              <div class="list-item" key=${m._id} style="align-items: flex-start; padding: 10px 0; border-bottom: 1px solid var(--border);">
+                <div class="list-avatar" style="margin-top: 2px;">
                   ${m.profilePhoto ? html`<img src="${m.profilePhoto}" alt="" />` : m.fullName.charAt(0)}
                 </div>
-                <div class="list-content">
-                  <div class="list-title">${m.fullName}</div>
-                  <div style="height: 6px; background: #e2e8f0; border-radius: 3px; margin: 4px 0; overflow: hidden;">
-                    <div style="height: 100%; width: ${pct}%; background: var(--primary);"></div>
+                <div class="list-content" style="flex: 1;">
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div class="list-title" style="font-weight: 700;">
+                      ${m.fullName}
+                      ${m.role === 'team_leader' ? html`<span class="badge badge-info" style="margin-left: 6px; font-size: 10px;">Leader</span>` : ''}
+                    </div>
+                    <div style="font-weight: 700; font-size: 13.5px; color: #059669;">
+                      ${formatCurrency(m.collected || 0)}
+                    </div>
                   </div>
-                  <div class="list-subtitle">${m.distributed} / ${m.allocated} calendars (${pct}%)</div>
-                </div>
-                <div style="text-align: right;">
-                  <div style="font-weight: 600; font-size: 14px; color: #059669;">${formatCurrency(m.collected)}</div>
+
+                  <!-- Collection Target Progress -->
+                  <div style="margin: 4px 0 2px 0;">
+                    <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-secondary);">
+                      <span>Target: <b>${formatCurrency(m.target || 25000)}</b> (Left: ${formatCurrency(m.remainingToTarget !== undefined ? m.remainingToTarget : Math.max(0, (m.target || 25000) - (m.collected || 0)))})</span>
+                      <span style="font-weight: 600; color: ${targetPct >= 100 ? '#059669' : '#0891b2'};">${targetPct}%</span>
+                    </div>
+                    <div style="height: 6px; background: #e2e8f0; border-radius: 3px; margin-top: 2px; overflow: hidden;">
+                      <div style="height: 100%; width: ${Math.min(100, targetPct)}%; background: #10b981;"></div>
+                    </div>
+                  </div>
+
+                  <!-- Stock Allocation Progress -->
+                  <div style="font-size: 11px; color: var(--text-secondary); margin-top: 4px;">
+                    Stock: ${m.distributed} / ${m.allocated} calendars (${stockPct}%)
+                  </div>
                 </div>
               </div>
             `;
@@ -442,6 +652,35 @@ export default function Dashboard() {
         <a href="#/collections" class="btn btn-success" style="padding: 12px 10px; font-size: 14px;">
           💰 + Collect Money
         </a>
+      </div>
+
+      <!-- Personal Collection Target Card -->
+      <div class="card" style="border-left: 4px solid #10b981; background: #f0fdf4;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+          <div style="font-weight: 700; color: #166534; font-size: 14px;">
+            🎯 My Collection Target Progress
+          </div>
+          <span class="badge badge-success" style="font-size: 11px; font-weight: 700;">
+            ${d.targetPercentage || 0}% Achieved
+          </span>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 8px; text-align: center;">
+          <div style="background: white; padding: 8px; border-radius: 6px; border: 1px solid #bbf7d0;">
+            <div style="font-size: 10.5px; color: var(--text-secondary);">My Target</div>
+            <div style="font-weight: 700; color: #1e293b; font-size: 13.5px;">${formatCurrency(d.collectionTarget || 25000)}</div>
+          </div>
+          <div style="background: white; padding: 8px; border-radius: 6px; border: 1px solid #bbf7d0;">
+            <div style="font-size: 10.5px; color: var(--text-secondary);">Approved Collected</div>
+            <div style="font-weight: 700; color: #059669; font-size: 13.5px;">${formatCurrency(d.collectedAmount || 0)}</div>
+          </div>
+          <div style="background: white; padding: 8px; border-radius: 6px; border: 1px solid #bbf7d0;">
+            <div style="font-size: 10.5px; color: var(--text-secondary);">Remaining to Goal</div>
+            <div style="font-weight: 700; color: #d97706; font-size: 13.5px;">${formatCurrency(d.remainingToTarget || 0)}</div>
+          </div>
+        </div>
+        <div style="height: 8px; background: #e2e8f0; border-radius: 4px; overflow: hidden;">
+          <div style="height: 100%; width: ${Math.min(100, d.targetPercentage || 0)}%; background: #10b981;"></div>
+        </div>
       </div>
 
       <!-- Personal Stats -->

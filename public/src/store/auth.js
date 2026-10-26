@@ -10,6 +10,14 @@ export const isAuthenticated = computed(() => !!currentUser.value);
 
 export async function checkAuth() {
   const token = getStoredToken();
+  const cachedUser = getStoredUser() || initialUser;
+
+  if (!token) {
+    currentUser.value = null;
+    isLoading.value = false;
+    return null;
+  }
+
   isLoading.value = true;
   try {
     const res = await api.get('/api/auth/me');
@@ -17,16 +25,26 @@ export async function checkAuth() {
       currentUser.value = res.data;
       setStoredUser(res.data);
       return res.data;
+    } else if (res && (res.offline || !navigator.onLine) && cachedUser) {
+      currentUser.value = cachedUser;
+      return cachedUser;
     } else {
       currentUser.value = null;
       clearStoredAuth();
       return null;
     }
   } catch (err) {
-    // If offline and we had an authenticated session in cache, preserve it
-    if (err && err.message && err.message.includes('offline') && initialUser) {
-      currentUser.value = initialUser;
-      return initialUser;
+    // If offline, network unreachable, or timeout, preserve cached session
+    const isOffline = !navigator.onLine || (err && err.message && (
+      err.message.includes('offline') ||
+      err.message.includes('Offline') ||
+      err.message.includes('timed out') ||
+      err.message.includes('fetch')
+    ));
+
+    if (isOffline && cachedUser) {
+      currentUser.value = cachedUser;
+      return cachedUser;
     }
     currentUser.value = null;
     clearStoredAuth();

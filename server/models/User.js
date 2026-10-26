@@ -48,6 +48,11 @@ const userSchema = new mongoose.Schema(
       type: String, // base64 data URI (JPEG thumbnail ~30-60KB)
       default: null
     },
+    collectionTarget: {
+      type: Number,
+      default: 25000,
+      min: 0
+    },
     passwordHint: {
       type: String,
       default: ''

@@ -1,6 +1,6 @@
 // API client with fetch, timeout, robust token auth handling, and offline fallback
 
-const TIMEOUT = 15000;
+const TIMEOUT = 30000;
 const TOKEN_KEY = 'lsc_auth_token';
 const USER_KEY = 'lsc_auth_user';
 
@@ -104,6 +104,16 @@ async function request(method, url, data, params) {
     const json = await res.json();
 
     if (!res.ok || json.success === false) {
+      if (json && (json.error === 'Offline - local cache active' || json.message === 'Offline - local cache active' || json.offline)) {
+        return {
+          success: true,
+          offline: true,
+          data: json.data || null,
+          text: json.text || null,
+          metadata: json.metadata || null,
+          message: 'Offline - local cache active'
+        };
+      }
       throw new Error(json.message || json.error || `Request failed (${res.status})`);
     }
 
@@ -111,6 +121,16 @@ async function request(method, url, data, params) {
   } catch (err) {
     if (err.name === 'AbortError') {
       throw new Error('Request timed out. Please try again.');
+    }
+    if (err.message && err.message.includes('Offline - local cache active')) {
+      return {
+        success: true,
+        offline: true,
+        data: null,
+        text: null,
+        metadata: null,
+        message: 'Offline - local cache active'
+      };
     }
     if (err instanceof TypeError && err.message.includes('fetch')) {
       throw new Error('You are offline. Data will be saved locally and synced when connected.');
