@@ -76,14 +76,55 @@ async function uploadBufferToCloudinary(buffer, userId) {
   });
 }
 
-// POST /api/uploads/profile-photo
+// GET /api/uploads/cloudinary-status - Check Cloudinary connectivity
+router.get('/cloudinary-status', async (req, res) => {
+  try {
+    const cloudinary = await getCloudinary();
+    if (!cloudinary) {
+      return res.json({ success: true, connected: false, message: 'Cloudinary not initialized' });
+    }
+    const pingResult = await cloudinary.api.ping();
+    return res.json({
+      success: true,
+      connected: true,
+      cloudName: process.env.CLOUDINARY_CLOUD_NAME || 'bhlwt5m9',
+      status: pingResult.status || 'ok'
+    });
+  } catch (err) {
+    return res.json({
+      success: true,
+      connected: false,
+      error: err.message,
+      cloudName: process.env.CLOUDINARY_CLOUD_NAME || 'bhlwt5m9'
+    });
+  }
+});
+
+// POST /api/uploads/profile-photo - Upload profile photo to Cloudinary
 router.post('/profile-photo', upload.single('photo'), async (req, res) => {
   try {
+    const targetUserId = (req.body && req.body.targetUserId) || req.query.targetUserId || req.user._id;
+
+    // Check permissions
+    const targetUser = await User.findById(targetUserId);
+    if (!targetUser) {
+      return res.status(404).json({ success: false, error: 'User not found.' });
+    }
+
+    if (String(targetUserId) !== String(req.user._id)) {
+      const isSuper = req.user.role === 'super_admin';
+      const isUsthad = req.user.role === 'usthad';
+      const isLeader = req.user.role === 'team_leader' && targetUser.teamId && req.user.teamId && String(targetUser.teamId) === String(req.user.teamId);
+      if (!isSuper && !isUsthad && !isLeader) {
+        return res.status(403).json({ success: false, error: 'Not authorized to change photo for this user.' });
+      }
+    }
+
     let finalPhotoUrl = null;
 
     if (req.file) {
       // 1. Upload file buffer directly to Cloudinary
-      const result = await uploadBufferToCloudinary(req.file.buffer, req.user._id);
+      const result = await uploadBufferToCloudinary(req.file.buffer, targetUser._id);
       finalPhotoUrl = result.secure_url;
     } else if (req.body && req.body.photoData) {
       // 2. Base64 data URI sent from client
@@ -93,7 +134,7 @@ router.post('/profile-photo', upload.single('photo'), async (req, res) => {
         if (cloudinary) {
           const result = await cloudinary.uploader.upload(base64Data, {
             folder: 'life_skill_course/profiles',
-            public_id: `user_${req.user._id}`,
+            public_id: `user_${targetUser._id}`,
             overwrite: true,
             transformation: [
               { width: 250, height: 250, crop: 'thumb', gravity: 'face' },
@@ -111,31 +152,29 @@ router.post('/profile-photo', upload.single('photo'), async (req, res) => {
       return res.status(400).json({ success: false, error: 'No image file or photo data provided.' });
     }
 
-    const user = await User.findById(req.user._id);
-    if (!user) {
-      return res.status(404).json({ success: false, error: 'User not found.' });
-    }
-
-    user.profilePhoto = finalPhotoUrl;
-    await user.save();
+    targetUser.profilePhoto = finalPhotoUrl;
+    await targetUser.save();
 
     return res.json({
       success: true,
       message: 'Profile photo uploaded to Cloudinary successfully! ✓',
-      photoUrl: finalPhotoUrl
+      photoUrl: finalPhotoUrl,
+      userId: targetUser._id
     });
   } catch (err) {
     console.error('Upload profile photo error:', err);
     // Graceful fallback if Cloudinary encounters quota or network error
     if (req.body && req.body.photoData) {
-      const user = await User.findById(req.user._id);
+      const targetUserId = (req.body && req.body.targetUserId) || req.user._id;
+      const user = await User.findById(targetUserId);
       if (user) {
         user.profilePhoto = req.body.photoData;
         await user.save();
         return res.json({
           success: true,
           message: 'Saved to local storage (Cloudinary fallback).',
-          photoUrl: req.body.photoData
+          photoUrl: req.body.photoData,
+          userId: user._id
         });
       }
     }
@@ -146,20 +185,35 @@ router.post('/profile-photo', upload.single('photo'), async (req, res) => {
 // DELETE /api/uploads/profile-photo
 router.delete('/profile-photo', async (req, res) => {
   try {
-    const user = await User.findById(req.user._id);
-    if (user) {
-      try {
-        const cloudinary = await getCloudinary();
-        if (cloudinary) {
-          await cloudinary.uploader.destroy(`life_skill_course/profiles/user_${req.user._id}`);
-        }
-      } catch (cErr) {
-        console.warn('Cloudinary delete notification:', cErr.message);
-      }
-      user.profilePhoto = null;
-      await user.save();
+    const targetUserId = (req.body && req.body.targetUserId) || req.query.targetUserId || req.user._id;
+
+    const targetUser = await User.findById(targetUserId);
+    if (!targetUser) {
+      return res.status(404).json({ success: false, error: 'User not found.' });
     }
-    return res.json({ success: true, message: 'Profile photo removed.' });
+
+    if (String(targetUserId) !== String(req.user._id)) {
+      const isSuper = req.user.role === 'super_admin';
+      const isUsthad = req.user.role === 'usthad';
+      const isLeader = req.user.role === 'team_leader' && targetUser.teamId && req.user.teamId && String(targetUser.teamId) === String(req.user.teamId);
+      if (!isSuper && !isUsthad && !isLeader) {
+        return res.status(403).json({ success: false, error: 'Not authorized to delete photo for this user.' });
+      }
+    }
+
+    try {
+      const cloudinary = await getCloudinary();
+      if (cloudinary) {
+        await cloudinary.uploader.destroy(`life_skill_course/profiles/user_${targetUser._id}`);
+      }
+    } catch (cErr) {
+      console.warn('Cloudinary delete notification:', cErr.message);
+    }
+
+    targetUser.profilePhoto = null;
+    await targetUser.save();
+
+    return res.json({ success: true, message: 'Profile photo removed from Cloudinary.', userId: targetUser._id });
   } catch (err) {
     console.error('Delete profile photo error:', err);
     return res.status(500).json({ success: false, error: 'Failed to delete photo.' });

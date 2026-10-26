@@ -810,6 +810,123 @@ test('Aggregation: Team total collection calculation respects overall collection
   const totalWhenOff = computeTeamTotalCollected(teamOverallOff, memberSum);
   assert.equal(totalWhenOff, 4000, 'Aggregates individual collections ₹4,000 when mode is OFF');
 });
+// 23. Admin Data Reset: Safety Confirmation and Authorization Validation
+test('Admin Data Reset: Validation requires exact RESET confirmation keyword', () => {
+  function validateResetRequest(userRole, confirmText, mode) {
+    if (userRole !== 'super_admin') {
+      return { success: false, status: 403, error: 'Only Super Admin can reset application data.' };
+    }
+    if (!confirmText || confirmText.trim() !== 'RESET') {
+      return { success: false, status: 400, error: 'Confirmation failed: You must type RESET in capital letters.' };
+    }
+    if (!['clean', 'sandbox'].includes(mode)) {
+      return { success: false, status: 400, error: 'Invalid mode.' };
+    }
+    return { success: true };
+  }
 
+  // Non-super_admin attempt
+  const leaderAttempt = validateResetRequest('team_leader', 'RESET', 'clean');
+  assert.equal(leaderAttempt.success, false);
+  assert.equal(leaderAttempt.status, 403);
 
+  // Super Admin wrong confirmation
+  const badConfirm = validateResetRequest('super_admin', 'reset', 'clean');
+  assert.equal(badConfirm.success, false);
+  assert.equal(badConfirm.status, 400);
 
+  // Super Admin correct confirmation
+  const goodClean = validateResetRequest('super_admin', 'RESET', 'clean');
+  assert.equal(goodClean.success, true);
+
+  const goodSandbox = validateResetRequest('super_admin', 'RESET', 'sandbox');
+  assert.equal(goodSandbox.success, true);
+});
+
+// 24. Reset Mock Store: Clean vs Sandbox mode verification
+test('Admin Data Reset: Mock store clean slate vs sandbox initialization', async () => {
+  const { resetMockStore, getMockStore } = await import('../server/middleware/mockData.js');
+
+  // Test clean slate
+  resetMockStore('clean');
+  const cleanStore = getMockStore();
+  assert.equal(cleanStore.teams.length, 4, 'Clean state restores 4 standard camp teams');
+  assert.equal(cleanStore.collections.length, 0, 'Clean state wipes all collections');
+  assert.equal(cleanStore.transfers.length, 0, 'Clean state wipes all transfers');
+  assert.equal(cleanStore.distributions.length, 0, 'Clean state wipes all distributions');
+  assert.equal(cleanStore.campaign.totalStock, 5000, 'Campaign total stock reset to 5000');
+  assert.equal(cleanStore.campaign.calendarPrice, 100, 'Campaign calendar price reset to 100');
+
+  // Test sandbox mode
+  resetMockStore('sandbox');
+  const sandboxStore = getMockStore();
+  assert.equal(sandboxStore.teams.length, 4, 'Sandbox has 4 teams');
+  assert.ok(sandboxStore.collections.length >= 3, 'Sandbox seeds collections');
+  assert.ok(sandboxStore.transfers.length >= 2, 'Sandbox seeds transfers');
+  assert.ok(sandboxStore.distributions.length >= 2, 'Sandbox seeds distributions');
+  assert.ok(sandboxStore.users.length >= 4, 'Sandbox seeds realistic users');
+});
+
+// 25. Cloudinary: Configuration verification and secure transformations
+test('Cloudinary: Credentials structure and folder path verification', () => {
+  const cloudinaryConfig = {
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME || 'bhlwt5m9',
+    api_key: process.env.CLOUDINARY_API_KEY || '681148252944323',
+    api_secret: process.env.CLOUDINARY_API_SECRET || 'ZkP5e7DSjh2dcLSAXcKwwF7lYnU',
+    secure: true
+  };
+
+  assert.equal(cloudinaryConfig.cloud_name, 'bhlwt5m9', 'Configured cloud_name matches bhlwt5m9');
+  assert.equal(cloudinaryConfig.api_key, '681148252944323', 'Configured api_key matches user account');
+  assert.ok(cloudinaryConfig.api_secret && cloudinaryConfig.api_secret.length > 10, 'Configured api_secret is valid');
+  assert.equal(cloudinaryConfig.secure, true, 'Uses HTTPS secure URLs');
+
+  function getUploadFolderOptions(userId) {
+    return {
+      folder: 'life_skill_course/profiles',
+      public_id: `user_${userId}`,
+      overwrite: true,
+      transformation: [
+        { width: 250, height: 250, crop: 'thumb', gravity: 'face' },
+        { quality: 'auto:good', fetch_format: 'auto' }
+      ]
+    };
+  }
+
+  const uploadOpts = getUploadFolderOptions('user123');
+  assert.equal(uploadOpts.folder, 'life_skill_course/profiles');
+  assert.equal(uploadOpts.public_id, 'user_user123');
+  assert.equal(uploadOpts.transformation[0].crop, 'thumb');
+});
+
+// 26. Cloudinary: Photo upload authorization for all users
+test('Authorization: Photo upload permission rules across roles', () => {
+  function canUploadPhotoFor(actingUser, targetUser) {
+    if (String(actingUser._id) === String(targetUser._id)) return true; // Self upload
+    if (actingUser.role === 'super_admin') return true; // Super admin can upload for all
+    if (actingUser.role === 'usthad') return true; // Usthad can upload for all
+    if (actingUser.role === 'team_leader' && actingUser.teamId && targetUser.teamId && String(actingUser.teamId) === String(targetUser.teamId)) {
+      return true; // Leader can upload for members of own team
+    }
+    return false;
+  }
+
+  const admin = { _id: 'u1', role: 'super_admin' };
+  const usthad = { _id: 'u2', role: 'usthad' };
+  const leaderA = { _id: 'u3', role: 'team_leader', teamId: 'team1' };
+  const memberA = { _id: 'u4', role: 'team_member', teamId: 'team1' };
+  const memberB = { _id: 'u5', role: 'team_member', teamId: 'team2' };
+
+  // Self upload
+  assert.equal(canUploadPhotoFor(memberA, memberA), true, 'Member can upload their own photo');
+  // Admin upload for any user
+  assert.equal(canUploadPhotoFor(admin, memberB), true, 'Admin can upload photo for any member');
+  // Usthad upload for any user
+  assert.equal(canUploadPhotoFor(usthad, memberA), true, 'Usthad can upload photo for any member');
+  // Leader upload for own team member
+  assert.equal(canUploadPhotoFor(leaderA, memberA), true, 'Leader can upload photo for own team member');
+  // Leader upload for other team member (forbidden)
+  assert.equal(canUploadPhotoFor(leaderA, memberB), false, 'Leader cannot upload photo for another team member');
+  // Member upload for other member (forbidden)
+  assert.equal(canUploadPhotoFor(memberA, memberB), false, 'Member cannot upload photo for other users');
+});

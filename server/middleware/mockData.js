@@ -553,6 +553,42 @@ export function mockFallbackMiddleware(req, res, next) {
     });
   }
 
+  // Admin: /api/admin/*
+  if (path === '/admin/system-stats' && method === 'GET') {
+    return res.json({
+      success: true,
+      data: {
+        users: mockStore.users.length,
+        teams: mockStore.teams.length,
+        areas: mockStore.areas.length,
+        distributions: mockStore.distributions.length,
+        collections: mockStore.collections.length,
+        transfers: mockStore.transfers.length,
+        expenses: mockStore.expenses.length,
+        corrections: mockStore.corrections.length
+      }
+    });
+  }
+
+  if (path === '/admin/reset-data' && method === 'POST') {
+    const caller = getUserFromToken();
+    if (caller.role !== 'super_admin') {
+      return res.status(403).json({ success: false, error: 'Only Super Admin can reset application data.' });
+    }
+    if (req.body.confirmText !== 'RESET') {
+      return res.status(400).json({ success: false, error: 'Confirmation failed: You must type "RESET" to confirm.' });
+    }
+    const mode = req.body.mode || 'clean';
+    resetMockStore(mode);
+    return res.json({
+      success: true,
+      message: mode === 'sandbox'
+        ? 'Sandbox initialized successfully with realistic demo data!'
+        : 'App data wiped and reset to clean production state!',
+      mode
+    });
+  }
+
   // Teams: /api/teams/*
   if (path === '/teams' || path === '/teams/') {
     if (method === 'GET') {
@@ -1444,4 +1480,121 @@ export function mockFallbackMiddleware(req, res, next) {
 
   // For any write operations
   return res.json({ success: true, message: 'Operation recorded in offline session.' });
+}
+
+export function resetMockStore(mode = 'clean') {
+  if (mode === 'clean') {
+    mockStore.distributions = [];
+    mockStore.collections = [];
+    mockStore.transfers = [];
+    mockStore.expenses = [];
+    mockStore.corrections = [];
+    mockStore.teams.forEach(t => {
+      t.totalDistributed = 0;
+      t.totalCollected = 0;
+      t.allocatedStock = 0;
+      t.leaderEntersOverallCollection = false;
+      t.overallCollectedAmount = 0;
+      t.overallCollectionNotes = '';
+    });
+    mockStore.users = mockStore.users.slice(0, 4); // Keep core admin, usthad, leader1, member1
+  } else {
+    // Sandbox mode: reload realistic initial test data
+    mockStore.distributions = [
+      {
+        _id: '65f000000000000000000051',
+        quantity: 50,
+        date: new Date().toISOString(),
+        memberId: { _id: '65f000000000000000000003', fullName: 'Ahmed Bilal', phone: '9876543212' },
+        teamId: { _id: '65f000000000000000000011', name: 'Al-Huda Team' },
+        areaId: { name: 'Downtown Commercial', district: 'Central' },
+        recipientName: 'City Center Bookstore',
+        recipientPhone: '9876543290',
+        status: 'approved',
+        approvalStatus: 'approved'
+      },
+      {
+        _id: '65f000000000000000000052',
+        quantity: 30,
+        date: new Date().toISOString(),
+        memberId: { _id: '65f000000000000000000004', fullName: 'Zaid Rahman', phone: '9876543213' },
+        teamId: { _id: '65f000000000000000000011', name: 'Al-Huda Team' },
+        areaId: { name: 'Market Junction', district: 'Central' },
+        recipientName: 'Community Library',
+        recipientPhone: '9876543291',
+        status: 'approved',
+        approvalStatus: 'approved'
+      }
+    ];
+
+    mockStore.collections = [
+      {
+        _id: '65f000000000000000000061',
+        amount: 5000,
+        date: new Date().toISOString(),
+        memberId: { _id: '65f000000000000000000003', fullName: 'Ahmed Bilal', phone: '9876543212' },
+        teamId: { _id: '65f000000000000000000011', name: 'Al-Huda Team' },
+        areaId: { name: 'Downtown Commercial', district: 'Central' },
+        collectedFrom: 'City Center Bookstore',
+        notes: 'Shop collections',
+        status: 'approved',
+        approvalStatus: 'approved'
+      },
+      {
+        _id: '65f000000000000000000062',
+        amount: 3000,
+        date: new Date().toISOString(),
+        memberId: { _id: '65f000000000000000000004', fullName: 'Zaid Rahman', phone: '9876543213' },
+        teamId: { _id: '65f000000000000000000011', name: 'Al-Huda Team' },
+        areaId: { name: 'Market Junction', district: 'Central' },
+        collectedFrom: 'Local Sponsor',
+        notes: 'Donation for campaign',
+        status: 'approved',
+        approvalStatus: 'approved'
+      },
+      {
+        _id: '65f000000000000000000063',
+        amount: 1500,
+        date: new Date().toISOString(),
+        memberId: { _id: '65f000000000000000000004', fullName: 'Zaid Rahman', phone: '9876543213' },
+        teamId: { _id: '65f000000000000000000011', name: 'Al-Huda Team' },
+        areaId: { name: 'Town Hall', district: 'Central' },
+        collectedFrom: 'Pharmacy Store',
+        notes: 'Pending cash verification',
+        status: 'pending',
+        approvalStatus: 'pending'
+      }
+    ];
+
+    mockStore.transfers = [
+      {
+        _id: '65f000000000000000000071',
+        fromUserId: { _id: '65f000000000000000000004', fullName: 'Zaid Rahman' },
+        toUserId: { _id: '65f000000000000000000003', fullName: 'Ahmed Bilal' },
+        teamId: { _id: '65f000000000000000000011', name: 'Al-Huda Team' },
+        amount: 3000,
+        paymentMode: 'cash',
+        transferDate: new Date().toISOString(),
+        status: 'confirmed'
+      },
+      {
+        _id: '65f000000000000000000072',
+        fromUserId: { _id: '65f000000000000000000003', fullName: 'Ahmed Bilal' },
+        toUserId: { _id: '65f000000000000000000002', fullName: 'Usthad Abdullah' },
+        teamId: { _id: '65f000000000000000000011', name: 'Al-Huda Team' },
+        amount: 5000,
+        paymentMode: 'gpay',
+        transferDate: new Date().toISOString(),
+        status: 'confirmed'
+      }
+    ];
+
+    mockStore.teams[0].totalDistributed = 80;
+    mockStore.teams[0].totalCollected = 8000;
+    mockStore.teams[0].allocatedStock = 800;
+  }
+}
+
+export function getMockStore() {
+  return mockStore;
 }

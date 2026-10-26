@@ -1,6 +1,7 @@
 import api from '../services/api.js';
+import db from '../services/db.js';
 import { currentUser, logout } from '../store/auth.js';
-import { syncStatus, syncAll } from '../services/sync.js';
+import { syncStatus, syncAll, refreshPendingCount } from '../services/sync.js';
 import { compressImage } from '../utils/image.js';
 
 const html = window.html;
@@ -22,7 +23,7 @@ export default function Settings() {
   const [photoUploading, setPhotoUploading] = useState(false);
 
   // Admin Setup Area states (Super Admin)
-  const [adminTab, setAdminTab] = useState('numbers'); // 'numbers' | 'users'
+  const [adminTab, setAdminTab] = useState('numbers'); // 'numbers' | 'users' | 'reset'
   const [campaignData, setCampaignData] = useState(null);
   const [dashboardStats, setDashboardStats] = useState(null);
   const [campaignForm, setCampaignForm] = useState({
@@ -43,8 +44,27 @@ export default function Settings() {
   const [credForm, setCredForm] = useState({ username: '', password: '', pin: '', clearPassword: false, clearPin: false });
   const [savingCred, setSavingCred] = useState(false);
 
+  // System Data Reset & Sandbox state
+  const [systemStats, setSystemStats] = useState(null);
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetTargetMode, setResetTargetMode] = useState('clean'); // 'clean' | 'sandbox'
+  const [resetConfirmText, setResetConfirmText] = useState('');
+  const [resettingData, setResettingData] = useState(false);
+
+  // Cloudinary connection state & user photo upload
+  const [cloudinaryStatus, setCloudinaryStatus] = useState(null);
+  const [userPhotoUploading, setUserPhotoUploading] = useState(false);
+
   // PWA install prompt handler
   const [deferredPrompt, setDeferredPrompt] = useState(null);
+
+  useEffect(() => {
+    api.get('/api/uploads/cloudinary-status').then((res) => {
+      if (res && res.success) {
+        setCloudinaryStatus(res);
+      }
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     window.addEventListener('beforeinstallprompt', (e) => {
@@ -91,12 +111,75 @@ export default function Settings() {
       if (teamsRes && teamsRes.success && teamsRes.data) {
         setTeamsList(teamsRes.data || []);
       }
+
+      // 4. Fetch System record counts
+      const statsRes = await api.get('/api/admin/system-stats');
+      if (statsRes && statsRes.success && statsRes.data) {
+        setSystemStats(statsRes.data);
+      }
     } catch (err) {
       console.warn('Could not load all admin setup data:', err);
     } finally {
       setLoadingUsers(false);
     }
   }, [user]);
+
+  const loadSystemStats = async () => {
+    try {
+      const res = await api.get('/api/admin/system-stats');
+      if (res && res.success && res.data) {
+        setSystemStats(res.data);
+      }
+    } catch (_) {}
+  };
+
+  const handleOpenResetModal = (mode) => {
+    setResetTargetMode(mode);
+    setResetConfirmText('');
+    setShowResetModal(true);
+  };
+
+  const handleExecuteReset = async (e) => {
+    if (e) e.preventDefault();
+    if (resetConfirmText.trim() !== 'RESET') {
+      if (window.showToast) window.showToast('Please type RESET in capital letters to confirm.', 'error');
+      return;
+    }
+
+    setResettingData(true);
+    try {
+      const res = await api.post('/api/admin/reset-data', {
+        mode: resetTargetMode,
+        confirmText: 'RESET'
+      });
+      if (res && res.success) {
+        await db.clearAll();
+        if (typeof refreshPendingCount === 'function') await refreshPendingCount();
+        if (window.showToast) window.showToast(res.message || 'Data reset completed successfully! ✓', 'success');
+        setShowResetModal(false);
+        setResetConfirmText('');
+        loadAdminSetupData();
+        loadSystemStats();
+      } else {
+        if (window.showToast) window.showToast(res.error || 'Failed to reset data.', 'error');
+      }
+    } catch (err) {
+      if (window.showToast) window.showToast(err.message || 'Error executing reset.', 'error');
+    } finally {
+      setResettingData(false);
+    }
+  };
+
+  const handleClearDeviceCache = async () => {
+    if (!confirm('Clear all locally cached data and pending offline queues on this device?')) return;
+    try {
+      await db.clearAll();
+      if (typeof refreshPendingCount === 'function') await refreshPendingCount();
+      if (window.showToast) window.showToast('Local offline device storage cleared! ✓', 'success');
+    } catch (err) {
+      if (window.showToast) window.showToast('Failed to clear device cache.', 'error');
+    }
+  };
 
   useEffect(() => {
     if (user && user.role === 'super_admin') {
@@ -185,6 +268,66 @@ export default function Settings() {
       loadAdminSetupData();
     } catch (err) {
       if (window.showToast) window.showToast(err.message || 'Failed to clear password.', 'error');
+    }
+  };
+
+  // Upload or replace any user photo directly to Cloudinary
+  const handleUserPhotoUpload = async (e, targetUserId) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+
+    setUserPhotoUploading(true);
+    try {
+      const compressedBlob = await compressImage(file, 250, 0.75);
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const base64Data = reader.result;
+        try {
+          const res = await api.post('/api/uploads/profile-photo', {
+            photoData: base64Data,
+            targetUserId: targetUserId
+          });
+          if (res && res.success) {
+            if (editingUser && editingUser._id === targetUserId) {
+              setEditingUser({ ...editingUser, profilePhoto: res.photoUrl });
+            }
+            if (currentUser.value && currentUser.value._id === targetUserId) {
+              currentUser.value = { ...currentUser.value, profilePhoto: res.photoUrl };
+            }
+            if (window.showToast) window.showToast('Profile photo uploaded to Cloudinary! ✓', 'success');
+            loadAdminSetupData();
+          }
+        } catch (postErr) {
+          if (window.showToast) window.showToast(postErr.message || 'Failed to upload photo.', 'error');
+        } finally {
+          setUserPhotoUploading(false);
+        }
+      };
+      reader.readAsDataURL(compressedBlob);
+    } catch (err) {
+      console.error('Photo compress error:', err);
+      setUserPhotoUploading(false);
+    }
+  };
+
+  // Remove photo from Cloudinary and database
+  const handleUserPhotoDelete = async (targetUserId) => {
+    if (!confirm('Remove profile photo for this user?')) return;
+    setUserPhotoUploading(true);
+    try {
+      await api.delete(`/api/uploads/profile-photo?targetUserId=${targetUserId}`);
+      if (editingUser && editingUser._id === targetUserId) {
+        setEditingUser({ ...editingUser, profilePhoto: null });
+      }
+      if (currentUser.value && currentUser.value._id === targetUserId) {
+        currentUser.value = { ...currentUser.value, profilePhoto: null };
+      }
+      if (window.showToast) window.showToast('Profile photo removed.', 'info');
+      loadAdminSetupData();
+    } catch (err) {
+      if (window.showToast) window.showToast(err.message || 'Failed to remove photo.', 'error');
+    } finally {
+      setUserPhotoUploading(false);
     }
   };
 
@@ -314,9 +457,12 @@ export default function Settings() {
           <div style="font-size: 17px; font-weight: 700;">${user.fullName}</div>
           <div style="font-size: 13px; color: var(--text-secondary);">@${user.username}</div>
           ${user.phone ? html`<div style="font-size: 12px; color: var(--text-secondary);">${user.phone}</div>` : ''}
-          <div style="font-size: 12px; margin-top: 2px;">
+          <div style="font-size: 12px; margin-top: 2px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
             <span class="badge badge-info" style="text-transform: capitalize;">${user.role.replace('_', ' ')}</span>
-            ${user.teamId ? html`<span style="margin-left: 6px; color: var(--text-secondary); font-weight: 500;">${user.teamId.name}</span>` : ''}
+            ${user.teamId ? html`<span style="color: var(--text-secondary); font-weight: 500;">${user.teamId.name}</span>` : ''}
+            <span class="badge ${cloudinaryStatus && cloudinaryStatus.connected ? 'badge-success' : 'badge-info'}" style="font-size: 11px;">
+              ☁️ Cloudinary: ${cloudinaryStatus && cloudinaryStatus.connected ? 'Connected (bhlwt5m9)' : 'Active'}
+            </span>
           </div>
         </div>
       </div>
@@ -335,7 +481,7 @@ export default function Settings() {
             Manage campaign content distribution numbers, recalculate financial metrics, and control Usthad and Team credentials.
           </p>
 
-          <!-- Tabs: Numbers & Calculations vs Team & Usthad Credentials -->
+          <!-- Tabs: Numbers & Calculations vs Team & Usthad Credentials vs Reset -->
           <div class="tabs" style="margin-bottom: 14px;">
             <button
               class="tab ${adminTab === 'numbers' ? 'active' : ''}"
@@ -348,6 +494,12 @@ export default function Settings() {
               onClick=${() => setAdminTab('users')}
             >
               👥 Teams & Usthad Logins
+            </button>
+            <button
+              class="tab ${adminTab === 'reset' ? 'active' : ''}"
+              onClick=${() => { setAdminTab('reset'); loadSystemStats(); }}
+            >
+              ⚠️ Reset & Sandboxes
             </button>
           </div>
 
@@ -460,7 +612,7 @@ export default function Settings() {
                 </button>
               </form>
             </div>
-          ` : html`
+          ` : adminTab === 'users' ? html`
             <!-- TAB 2: TEAMS & USTHAD CREDENTIALS (USERNAME, PASSWORD, PIN EDIT & DELETE) -->
             <div>
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
@@ -496,12 +648,17 @@ export default function Settings() {
                       "
                     >
                       <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-                        <div>
-                          <b style="font-size: 14px; color: var(--text);">${u.fullName}</b>
-                          <div style="font-size: 12px; color: var(--text-secondary);">
-                            Username: <code style="background: #e2e8f0; padding: 1px 4px; border-radius: 4px;">@${u.username}</code>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                          <div class="list-avatar" style="width: 42px; height: 42px; font-size: 16px; background: linear-gradient(135deg, var(--primary), var(--accent)); color: white; border-radius: 50%; overflow: hidden; flex-shrink: 0;">
+                            ${u.profilePhoto ? html`<img src="${u.profilePhoto}" alt="" style="width: 100%; height: 100%; object-fit: cover;" />` : u.fullName.charAt(0)}
                           </div>
-                          ${u.phone ? html`<div style="font-size: 11px; color: var(--text-light);">${u.phone}</div>` : ''}
+                          <div>
+                            <b style="font-size: 14px; color: var(--text);">${u.fullName}</b>
+                            <div style="font-size: 12px; color: var(--text-secondary);">
+                              Username: <code style="background: #e2e8f0; padding: 1px 4px; border-radius: 4px;">@${u.username}</code>
+                            </div>
+                            ${u.phone ? html`<div style="font-size: 11px; color: var(--text-light);">${u.phone}</div>` : ''}
+                          </div>
                         </div>
                         <div style="text-align: right;">
                           <span class="badge ${u.role === 'usthad' ? 'badge-warning' : (u.role === 'super_admin' ? 'badge-error' : 'badge-info')}" style="font-size: 10px; text-transform: uppercase;">
@@ -547,6 +704,117 @@ export default function Settings() {
                 </div>
               `}
             </div>
+          ` : html`
+            <!-- TAB 3: RESET & SANDBOXES -->
+            <div>
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <span style="font-size: 13px; font-weight: 700;">System Statistics & Database Controls</span>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-outline"
+                  onClick=${loadSystemStats}
+                >
+                  🔄 Refresh Stats
+                </button>
+              </div>
+
+              <!-- Live Stats Grid -->
+              ${systemStats ? html`
+                <div style="background: #f8fafc; border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 16px;">
+                  <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 8px;">
+                    📊 Current Database Records
+                  </div>
+                  <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;">
+                    <div style="background: white; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px;">
+                      <div style="font-size: 11px; color: var(--text-secondary);">Registered Users</div>
+                      <div style="font-size: 15px; font-weight: 700; color: var(--text);">${systemStats.users}</div>
+                    </div>
+                    <div style="background: white; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px;">
+                      <div style="font-size: 11px; color: var(--text-secondary);">Camp Teams</div>
+                      <div style="font-size: 15px; font-weight: 700; color: var(--text);">${systemStats.teams}</div>
+                    </div>
+                    <div style="background: white; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px;">
+                      <div style="font-size: 11px; color: var(--text-secondary);">Collections Count</div>
+                      <div style="font-size: 15px; font-weight: 700; color: #059669;">
+                        ${systemStats.collections}
+                        <span style="font-size: 11px; font-weight: 500; color: var(--text-secondary); margin-left: 4px;">(₹${(systemStats.collectionsTotal || 0).toLocaleString('en-IN')})</span>
+                      </div>
+                    </div>
+                    <div style="background: white; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px;">
+                      <div style="font-size: 11px; color: var(--text-secondary);">Money Transfers</div>
+                      <div style="font-size: 15px; font-weight: 700; color: #0284c7;">
+                        ${systemStats.transfers}
+                        <span style="font-size: 11px; font-weight: 500; color: var(--text-secondary); margin-left: 4px;">(₹${(systemStats.transfersTotal || 0).toLocaleString('en-IN')})</span>
+                      </div>
+                    </div>
+                    <div style="background: white; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px;">
+                      <div style="font-size: 11px; color: var(--text-secondary);">Stock Distributions</div>
+                      <div style="font-size: 15px; font-weight: 700; color: var(--text);">${systemStats.distributions}</div>
+                    </div>
+                    <div style="background: white; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px;">
+                      <div style="font-size: 11px; color: var(--text-secondary);">Camp Expenses</div>
+                      <div style="font-size: 15px; font-weight: 700; color: #dc2626;">
+                        ${systemStats.expenses}
+                        <span style="font-size: 11px; font-weight: 500; color: var(--text-secondary); margin-left: 4px;">(₹${(systemStats.expensesTotal || 0).toLocaleString('en-IN')})</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ` : ''}
+
+              <!-- ACTION 1: CLEAN SLATE PRODUCTION RESET -->
+              <div style="border: 1px solid #fecaca; background: #fff5f5; border-radius: 8px; padding: 12px; margin-bottom: 12px;">
+                <div style="display: flex; align-items: center; gap: 6px; font-weight: 700; color: #991b1b; font-size: 14px; margin-bottom: 4px;">
+                  <span>🧹</span> 1. Clean Slate (Production Reset)
+                </div>
+                <p style="font-size: 12px; color: #7f1d1d; margin-bottom: 10px; line-height: 1.4;">
+                  Wipes all transaction data (collections, stock issues, transfers, expenses, corrections). Restores clean campaign defaults (5,000 calendars @ ₹100, 0 collected, 0 distributed), standard 4 camp teams, and default accounts. Also clears local offline device storage.
+                </p>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-danger btn-full"
+                  onClick=${() => handleOpenResetModal('clean')}
+                  style="background: #dc2626; color: white; font-weight: 600;"
+                >
+                  🧹 Reset to Clean Production Slate
+                </button>
+              </div>
+
+              <!-- ACTION 2: SANDBOX DEMO RESET -->
+              <div style="border: 1px solid #bfdbfe; background: #eff6ff; border-radius: 8px; padding: 12px; margin-bottom: 12px;">
+                <div style="display: flex; align-items: center; gap: 6px; font-weight: 700; color: #1e40af; font-size: 14px; margin-bottom: 4px;">
+                  <span>🧪</span> 2. Sandbox Demo (Testing & Training)
+                </div>
+                <p style="font-size: 12px; color: #1e3a8a; margin-bottom: 10px; line-height: 1.4;">
+                  Replaces the database with rich demo data: realistic distributed stock, approved & pending member collections, confirmed & pending money transfers, expenses, and full team members. Perfect for live testing, keypad logins, and WhatsApp report checks.
+                </p>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-primary btn-full"
+                  onClick=${() => handleOpenResetModal('sandbox')}
+                  style="font-weight: 600;"
+                >
+                  🧪 Load Realistic Sandbox Demo Data
+                </button>
+              </div>
+
+              <!-- ACTION 3: CLEAR LOCAL OFFLINE CACHE -->
+              <div style="border: 1px solid var(--border); background: #f8fafc; border-radius: 8px; padding: 12px;">
+                <div style="display: flex; align-items: center; gap: 6px; font-weight: 700; color: var(--text); font-size: 14px; margin-bottom: 4px;">
+                  <span>📱</span> 3. Clear Local Device Cache
+                </div>
+                <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 10px; line-height: 1.4;">
+                  Purges IndexedDB local offline cache on this browser/phone without affecting central database records. Resolves any local sync conflicts or stuck offline entries.
+                </p>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-outline btn-full"
+                  onClick=${handleClearDeviceCache}
+                >
+                  📱 Purge Local Device Cache (IndexedDB)
+                </button>
+              </div>
+            </div>
           `}
         </div>
       ` : ''}
@@ -558,6 +826,34 @@ export default function Settings() {
             <div class="modal-header">
               <div class="modal-title">Edit Credentials: ${editingUser.fullName}</div>
               <button class="navbar-btn" style="color: var(--text);" onClick=${() => setEditingUser(null)}>✕</button>
+            </div>
+
+            <!-- Profile Photo Upload via Cloudinary -->
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; margin-bottom: 14px; display: flex; align-items: center; gap: 12px;">
+              <div class="list-avatar" style="width: 52px; height: 52px; font-size: 20px; background: linear-gradient(135deg, var(--primary), var(--accent)); color: white; border-radius: 50%; overflow: hidden; flex-shrink: 0;">
+                ${editingUser.profilePhoto ? html`<img src="${editingUser.profilePhoto}" alt="" style="width: 100%; height: 100%; object-fit: cover;" />` : editingUser.fullName.charAt(0)}
+              </div>
+              <div style="flex: 1;">
+                <div style="font-size: 13px; font-weight: 700; color: #0f172a;">User Profile Photo</div>
+                <div style="font-size: 11px; color: #0284c7; margin-bottom: 6px;">☁️ Hosted on Cloudinary (bhlwt5m9)</div>
+                <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                  <label class="btn btn-sm btn-primary" style="cursor: pointer; padding: 4px 10px; font-size: 11px; min-height: 26px;">
+                    ${userPhotoUploading ? 'Uploading to Cloudinary...' : '📷 Upload Photo'}
+                    <input type="file" accept="image/*" style="display: none;" onChange=${(e) => handleUserPhotoUpload(e, editingUser._id)} disabled=${userPhotoUploading} />
+                  </label>
+                  ${editingUser.profilePhoto ? html`
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-danger"
+                      onClick=${() => handleUserPhotoDelete(editingUser._id)}
+                      disabled=${userPhotoUploading}
+                      style="padding: 4px 10px; font-size: 11px; min-height: 26px;"
+                    >
+                      🗑️ Remove Photo
+                    </button>
+                  ` : ''}
+                </div>
+              </div>
             </div>
 
             <form onSubmit=${handleSaveUserCredentials}>
@@ -619,6 +915,68 @@ export default function Settings() {
                 </button>
                 <button type="submit" class="btn btn-primary btn-full" disabled=${savingCred}>
                   ${savingCred ? 'Saving...' : 'Save Credentials'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- DANGEROUS ACTION: DATA RESET MODAL -->
+      ${showResetModal ? html`
+        <div class="modal-overlay" onClick=${() => !resettingData && setShowResetModal(false)}>
+          <div class="modal" onClick=${(e) => e.stopPropagation()} style="border-top: 4px solid #dc2626;">
+            <div class="modal-header">
+              <div class="modal-title" style="color: #dc2626; display: flex; align-items: center; gap: 6px;">
+                <span>⚠️</span> Confirm ${resetTargetMode === 'sandbox' ? 'Sandbox Demo Reset' : 'Clean Slate Reset'}
+              </div>
+              <button class="navbar-btn" style="color: var(--text);" onClick=${() => !resettingData && setShowResetModal(false)}>✕</button>
+            </div>
+
+            <div style="font-size: 13px; line-height: 1.5; color: var(--text-secondary); margin-bottom: 14px;">
+              ${resetTargetMode === 'sandbox' ? html`
+                This will <b>replace all current database records</b> with fresh realistic sandbox demo data (distributed stock, collections, transfers, expenses, teams, and sample users).
+              ` : html`
+                This will <b>permanently wipe all collections, distributions, transfers, expenses, and custom accounts</b>. Standard camp teams and default admin/usthad accounts will be restored with clean 0-balance figures.
+              `}
+              <div style="margin-top: 10px; padding: 10px; background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; color: #991b1b; font-size: 12px;">
+                <b>Warning:</b> This action cannot be undone. All offline browser caches on this device will also be cleared.
+              </div>
+            </div>
+
+            <form onSubmit=${handleExecuteReset}>
+              <div class="form-group">
+                <label class="form-label" style="font-size: 13px; font-weight: 600;">
+                  Type <span style="color: #dc2626; font-family: monospace; font-size: 14px;">RESET</span> to confirm:
+                </label>
+                <input
+                  type="text"
+                  class="form-input"
+                  placeholder="RESET"
+                  value=${resetConfirmText}
+                  onInput=${(e) => setResetConfirmText(e.target.value)}
+                  disabled=${resettingData}
+                  required
+                  autoFocus
+                />
+              </div>
+
+              <div class="btn-group" style="margin-top: 18px;">
+                <button
+                  type="button"
+                  class="btn btn-secondary btn-full"
+                  onClick=${() => setShowResetModal(false)}
+                  disabled=${resettingData}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  class="btn btn-danger btn-full"
+                  disabled=${resettingData || resetConfirmText.trim() !== 'RESET'}
+                  style="background: #dc2626; color: white;"
+                >
+                  ${resettingData ? 'Executing Reset...' : (resetTargetMode === 'sandbox' ? 'Confirm & Load Sandbox' : 'Confirm & Wipe Everything')}
                 </button>
               </div>
             </form>

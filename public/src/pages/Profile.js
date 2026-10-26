@@ -175,10 +175,15 @@ export default function Profile() {
       reader.onloadend = async () => {
         const base64Data = reader.result;
         try {
-          const res = await api.post('/api/uploads/profile-photo', { photoData: base64Data });
+          const res = await api.post('/api/uploads/profile-photo', {
+            photoData: base64Data,
+            targetUserId: targetUserId
+          });
           if (res && res.success) {
-            currentUser.value = { ...currentUser.value, profilePhoto: res.photoUrl };
-            if (window.showToast) window.showToast('Profile photo updated! ✓', 'success');
+            if (isSelf) {
+              currentUser.value = { ...currentUser.value, profilePhoto: res.photoUrl };
+            }
+            if (window.showToast) window.showToast('Profile photo updated in Cloudinary! ✓', 'success');
             loadProfile();
           }
         } catch (postErr) {
@@ -288,8 +293,8 @@ export default function Profile() {
             <div class="list-avatar" style="width: 64px; height: 64px; font-size: 26px; background: linear-gradient(135deg, #0284c7, #1d4ed8); color: white;">
               ${u.profilePhoto ? html`<img src="${u.profilePhoto}" alt="" />` : u.fullName.charAt(0)}
             </div>
-            ${isSelf ? html`
-              <label style="position: absolute; bottom: -4px; right: -4px; background: white; border-radius: 50%; padding: 4px; box-shadow: var(--shadow-sm); cursor: pointer; border: 1px solid #e2e8f0;">
+            ${isSelf || (loggedInUser && (loggedInUser.role === 'super_admin' || loggedInUser.role === 'usthad' || (loggedInUser.role === 'team_leader' && loggedInUser.teamId && u.teamId && String(loggedInUser.teamId._id || loggedInUser.teamId) === String(u.teamId._id || u.teamId)))) ? html`
+              <label style="position: absolute; bottom: -4px; right: -4px; background: white; border-radius: 50%; padding: 4px; box-shadow: var(--shadow-sm); cursor: pointer; border: 1px solid #e2e8f0;" title="Upload photo to Cloudinary">
                 <svg style="width: 14px; height: 14px; color: var(--primary);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path>
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path>
@@ -306,8 +311,9 @@ export default function Profile() {
                 ${u.isActive !== false ? 'Active' : 'Deactivated'}
               </span>
             </div>
-            <div style="font-size: 13px; color: var(--text-secondary); margin-top: 2px;">
-              <b>@${u.username}</b> · <span style="text-transform: capitalize;">${u.role.replace('_', ' ')}</span>
+            <div style="font-size: 13px; color: var(--text-secondary); margin-top: 2px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+              <span><b>@${u.username}</b> · <span style="text-transform: capitalize;">${u.role.replace('_', ' ')}</span></span>
+              <span class="badge badge-info" style="font-size: 10px;">☁️ Cloudinary</span>
             </div>
             <div style="font-size: 12px; color: #0284c7; font-weight: 600; margin-top: 1px;">
               🏷️ ${u.teamId ? (u.teamId.name || u.teamId) : 'Central Team'}

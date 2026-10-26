@@ -1,6 +1,7 @@
 import api from '../services/api.js';
 import { currentUser } from '../store/auth.js';
 import { formatCurrency, formatNumber, formatDate } from '../utils/format.js';
+import { compressImage } from '../utils/image.js';
 
 const html = window.html;
 const { useState, useEffect } = window.hooks;
@@ -30,7 +31,12 @@ export default function Members() {
   const [newPin, setNewPin] = useState('');
   const [newRole, setNewRole] = useState('team_member');
   const [newTeamId, setNewTeamId] = useState('');
+  const [newPhotoData, setNewPhotoData] = useState(null);
+  const [newPhotoUploading, setNewPhotoUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  // Quick photo upload state per member
+  const [uploadingMemberPhotoId, setUploadingMemberPhotoId] = useState(null);
 
   // One-time Credential Sharing Modal
   const [oneTimeCreds, setOneTimeCreds] = useState(null);
@@ -132,7 +138,8 @@ export default function Members() {
         phone: newPhone.trim(),
         pin: newPin ? newPin.trim() : undefined,
         role: isLeader ? 'team_member' : newRole,
-        teamId: isLeader ? (user.teamId ? (user.teamId._id || user.teamId) : null) : (newTeamId || null)
+        teamId: isLeader ? (user.teamId ? (user.teamId._id || user.teamId) : null) : (newTeamId || null),
+        profilePhoto: newPhotoData || null
       };
 
       const res = await api.post('/api/users', payload);
@@ -144,6 +151,7 @@ export default function Members() {
         setNewFullName('');
         setNewPhone('');
         setNewPin('');
+        setNewPhotoData(null);
 
         // Show one-time credential modal
         if (res.initialCredentials) {
@@ -155,6 +163,63 @@ export default function Members() {
       if (window.showToast) window.showToast(err.message || 'Failed to create account.', 'error');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleNewUserPhotoPick = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+
+    setNewPhotoUploading(true);
+    try {
+      const compressedBlob = await compressImage(file, 250, 0.75);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setNewPhotoData(reader.result);
+        setNewPhotoUploading(false);
+      };
+      reader.readAsDataURL(compressedBlob);
+    } catch (err) {
+      console.error('Photo compress error:', err);
+      setNewPhotoUploading(false);
+    }
+  };
+
+  // Upload or replace any member's photo directly via Cloudinary
+  const handleMemberPhotoUpload = async (e, memberId) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+
+    setUploadingMemberPhotoId(memberId);
+    try {
+      const compressedBlob = await compressImage(file, 250, 0.75);
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const base64Data = reader.result;
+        try {
+          const res = await api.post('/api/uploads/profile-photo', {
+            photoData: base64Data,
+            targetUserId: memberId
+          });
+          if (res && res.success) {
+            setMembers((prev) =>
+              prev.map((m) => (m._id === memberId ? { ...m, profilePhoto: res.photoUrl } : m))
+            );
+            if (currentUser.value && currentUser.value._id === memberId) {
+              currentUser.value = { ...currentUser.value, profilePhoto: res.photoUrl };
+            }
+            if (window.showToast) window.showToast('Photo uploaded to Cloudinary! ✓', 'success');
+          }
+        } catch (postErr) {
+          if (window.showToast) window.showToast(postErr.message || 'Failed to upload photo.', 'error');
+        } finally {
+          setUploadingMemberPhotoId(null);
+        }
+      };
+      reader.readAsDataURL(compressedBlob);
+    } catch (err) {
+      console.error('Photo compress error:', err);
+      setUploadingMemberPhotoId(null);
     }
   };
 
@@ -575,6 +640,25 @@ export default function Members() {
                 />
               </div>
 
+              <!-- Profile Photo for New User (Cloudinary) -->
+              <div class="form-group">
+                <label class="form-label">Profile Photo (Optional - Cloudinary)</label>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                  <div class="list-avatar" style="width: 44px; height: 44px; font-size: 18px; background: #e2e8f0; color: #64748b; border-radius: 50%; overflow: hidden; flex-shrink: 0;">
+                    ${newPhotoData ? html`<img src="${newPhotoData}" alt="" style="width: 100%; height: 100%; object-fit: cover;" />` : '👤'}
+                  </div>
+                  <label class="btn btn-sm btn-outline" style="cursor: pointer; padding: 4px 10px; font-size: 12px;">
+                    ${newPhotoUploading ? 'Processing...' : (newPhotoData ? 'Change Photo' : '📷 Choose Photo')}
+                    <input type="file" accept="image/*" style="display: none;" onChange=${handleNewUserPhotoPick} disabled=${newPhotoUploading} />
+                  </label>
+                  ${newPhotoData ? html`
+                    <button type="button" class="btn btn-sm btn-outline" onClick=${() => setNewPhotoData(null)} style="color: #dc2626; padding: 4px 8px; font-size: 11px;">
+                      ✕ Remove
+                    </button>
+                  ` : ''}
+                </div>
+              </div>
+
               ${isSuperAdmin ? html`
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
                   <div class="form-group">
@@ -791,11 +875,32 @@ export default function Members() {
               >
                 <!-- Top Row: Avatar, Name, Role & Status Badges -->
                 <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
-                  <div
-                    class="list-avatar"
-                    style="width: 44px; height: 44px; font-size: 18px; background: linear-gradient(135deg, #0284c7, #1d4ed8); color: white;"
-                  >
-                    ${m.profilePhoto ? html`<img src="${m.profilePhoto}" alt="" />` : m.fullName.charAt(0)}
+                  <div style="position: relative;">
+                    <div
+                      class="list-avatar"
+                      style="width: 46px; height: 46px; font-size: 18px; background: linear-gradient(135deg, #0284c7, #1d4ed8); color: white; border-radius: 50%; overflow: hidden; display: flex; align-items: center; justify-content: center;"
+                    >
+                      ${uploadingMemberPhotoId === m._id
+                        ? html`<div class="spinner" style="width: 18px; height: 18px; border-width: 2px;"></div>`
+                        : m.profilePhoto
+                        ? html`<img src="${m.profilePhoto}" alt="" style="width: 100%; height: 100%; object-fit: cover;" />`
+                        : m.fullName.charAt(0)}
+                    </div>
+                    ${isSuperAdmin || isLeader ? html`
+                      <label
+                        style="position: absolute; bottom: -3px; right: -3px; background: white; border-radius: 50%; padding: 3px; box-shadow: 0 1px 3px rgba(0,0,0,0.25); cursor: pointer; border: 1px solid #cbd5e1; display: flex; align-items: center; justify-content: center; width: 19px; height: 19px;"
+                        title="Upload/change photo on Cloudinary"
+                      >
+                        <span style="font-size: 10px; line-height: 1;">📷</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          style="display: none;"
+                          onChange=${(e) => handleMemberPhotoUpload(e, m._id)}
+                          disabled=${uploadingMemberPhotoId === m._id}
+                        />
+                      </label>
+                    ` : ''}
                   </div>
 
                   <div style="flex: 1; min-width: 0;">

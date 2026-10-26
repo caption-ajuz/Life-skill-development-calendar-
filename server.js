@@ -34,6 +34,7 @@ import uploadsRouter from './server/routes/uploads.js';
 import syncRouter from './server/routes/sync.js';
 import expensesRouter from './server/routes/expenses.js';
 import correctionsRouter from './server/routes/corrections.js';
+import adminRouter from './server/routes/admin.js';
 
 dotenv.config({ override: true });
 
@@ -141,6 +142,7 @@ app.use('/api/uploads', uploadsRouter);
 app.use('/api/sync', syncRouter);
 app.use('/api/expenses', expensesRouter);
 app.use('/api/corrections', correctionsRouter);
+app.use('/api/admin', adminRouter);
 
 // SPA Fallback: Serve index.html for all non-API GET requests
 app.get('*', (req, res, next) => {

@@ -85,7 +85,7 @@ router.get('/', async (req, res) => {
 // POST /api/users - Super admin (any role) or Team Leader (strictly restricted to their own team members)
 router.post('/', requireRole('super_admin', 'team_leader'), async (req, res) => {
   try {
-    const { username, password, fullName, phone, pin, role, teamId } = req.body;
+    const { username, password, fullName, phone, pin, role, teamId, profilePhoto } = req.body;
 
     const check = validateRequired(req.body, ['username', 'password', 'fullName']);
     if (!check.valid) {
@@ -160,6 +160,7 @@ router.post('/', requireRole('super_admin', 'team_leader'), async (req, res) => 
       pinHint: cleanPin || '',
       fullName: fullName.trim(),
       phone: normalizedPhone,
+      profilePhoto: profilePhoto || null,
       role: assignedRole,
       teamId: assignedTeamId,
       mustChangePassword: true, // Temporary password flag: requires change upon first login
