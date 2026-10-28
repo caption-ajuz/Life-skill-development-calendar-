@@ -25,7 +25,7 @@ router.get('/', async (req, res) => {
       filter.campaignId = req.query.campaignId;
     }
 
-    const teams = await Team.find(filter).sort({ name: 1 });
+    const teams = await Team.find(filter).populate('leaderId', 'fullName phone profilePhoto username role').sort({ name: 1 });
 
     // Aggregate statistics per team
     const teamStats = await Promise.all(
@@ -70,7 +70,12 @@ router.get('/', async (req, res) => {
           isArchived: Boolean(t.isArchived),
           archivedAt: t.archivedAt || null,
           campaignId: t.campaignId || null,
-          leader: leaderUser ? {
+          leader: (t.leaderId && t.leaderId.fullName) ? {
+            _id: t.leaderId._id,
+            fullName: t.leaderId.fullName,
+            phone: t.leaderId.phone,
+            profilePhoto: t.leaderId.profilePhoto
+          } : leaderUser ? {
             _id: leaderUser._id,
             fullName: leaderUser.fullName,
             phone: leaderUser.phone,
@@ -127,6 +132,8 @@ router.post('/', requireRole('super_admin'), async (req, res) => {
 
     // If leaderId is specified, assign as team_leader
     if (leaderId && isValidObjectId(leaderId)) {
+      team.leaderId = leaderId;
+      await team.save();
       const leaderUser = await User.findById(leaderId);
       if (leaderUser) {
         leaderUser.teamId = team._id;
@@ -303,6 +310,8 @@ router.put('/:id/leader', requireRole('super_admin'), async (req, res) => {
       newLeader.role = 'team_leader';
     }
     await newLeader.save();
+    team.leaderId = newLeader._id;
+    await team.save();
 
     await logAudit({
       entityType: 'team',

@@ -161,10 +161,7 @@ export default function Teams() {
   // Remove member from team (demote to independent)
   const handleRemoveMember = async (m) => {
     if (!selectedTeam) return;
-    const confirmRemove = window.confirm(
-      `Remove ${m.fullName} from ${selectedTeam.name}?\n\nThey will remain an active member in Independent/No-Team state. Their personal collection and distribution records will NOT be deleted.`
-    );
-    if (!confirmRemove) return;
+    // Remove confirmed directly
 
     try {
       const res = await api.delete(`/api/teams/${selectedTeam._id}/members/${m._id}`);
@@ -202,10 +199,7 @@ export default function Teams() {
     // Permanently Delete Team
   const handleDeleteTeam = async () => {
     if (!selectedTeam) return;
-    const confirmDelete = window.confirm(
-      `Permanently delete Team "${selectedTeam.name}"?\n\nThis will remove the team from the system. Any assigned members will become independent collectors.`
-    );
-    if (!confirmDelete) return;
+    // Delete confirmed directly
 
     setArchiving(true);
     try {
@@ -225,10 +219,7 @@ export default function Teams() {
   // Archive Team safely
   const handleArchiveTeam = async () => {
     if (!selectedTeam) return;
-    const confirmArchive = window.confirm(
-      `Archive Team "${selectedTeam.name}"?\n\nMembers will safely transition to Independent/No-Team status. All historical collections, distributions, and campaign records are permanently preserved.`
-    );
-    if (!confirmArchive) return;
+    // Archive confirmed directly
 
     setArchiving(true);
     try {
@@ -347,7 +338,8 @@ export default function Teams() {
         : html`
             <div class="card-list">
               ${teams.map((t) => {
-                const leaderName = t.leaderId && t.leaderId.fullName ? t.leaderId.fullName : 'No Leader Assigned';
+                const leader = t.leader || t.leaderId;
+                const leaderName = (leader && leader.fullName) ? leader.fullName : 'No Leader Assigned';
                 return html`
                   <div
                     class="card"
@@ -387,7 +379,7 @@ export default function Teams() {
                   <div>
                     <div class="modal-title">${teamDetail.team.name}</div>
                     <div style="font-size: 12px; color: var(--text-secondary);">
-                      👤 Leader: <strong>${teamDetail.team.leaderId ? teamDetail.team.leaderId.fullName : 'None'}</strong>
+                      👤 Leader: <strong>${(teamDetail.team?.leader?.fullName || teamDetail.team?.leaderId?.fullName || teamDetail.members?.find(m => m.role === 'team_leader')?.fullName) || 'No Leader Assigned'}</strong>
                     </div>
                   </div>
                   <button

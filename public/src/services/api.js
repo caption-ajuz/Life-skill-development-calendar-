@@ -101,7 +101,21 @@ async function request(method, url, data, params) {
       throw new Error('Session expired. Please log in again.');
     }
 
-    const json = await res.json();
+    const contentType = res.headers.get('content-type') || '';
+    let json;
+    if (contentType.includes('application/json')) {
+      json = await res.json();
+    } else {
+      const rawText = await res.text();
+      let errorMsg = 'Server returned unexpected response';
+      try {
+        const parsed = JSON.parse(rawText);
+        errorMsg = parsed.error || parsed.message || errorMsg;
+      } catch (_) {
+        errorMsg = `Server returned non-JSON response (${res.status})`;
+      }
+      throw new Error(errorMsg);
+    }
 
     if (!res.ok || json.success === false) {
       if (json && (json.error === 'Offline - local cache active' || json.message === 'Offline - local cache active' || json.offline)) {

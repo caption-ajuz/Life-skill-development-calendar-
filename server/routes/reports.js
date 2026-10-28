@@ -110,6 +110,8 @@ router.get('/whatsapp-summary', async (req, res) => {
       includeHandoverStatus: true,
       includeProgressBar: true,
       includeTargetProgress: false,
+      includeCollectionRanking: true,
+      includeTeamSubmissionStatus: true,
       includeZeroActivity: false,
       includeOfflineNotice: true,
       includeFooter: true
@@ -132,6 +134,8 @@ router.get('/whatsapp-summary', async (req, res) => {
       'includeHandoverStatus',
       'includeProgressBar',
       'includeTargetProgress',
+      'includeCollectionRanking',
+      'includeTeamSubmissionStatus',
       'includeZeroActivity',
       'includeOfflineNotice',
       'includeFooter'
@@ -320,7 +324,36 @@ router.get('/whatsapp-summary', async (req, res) => {
       };
     });
 
+        // Calculate Daily Team Submission Status (ഇന്നത്തെ കണക്ക് ലഭിച്ചത്)
+    const teamSubmissions = await Promise.all(
+      allTeams.map(async (t) => {
+        const teamFilter = { teamId: t._id, status: { $in: ['active', 'approved'] } };
+        if (targetDateStart && targetDateEnd) {
+          teamFilter.date = { $gte: targetDateStart, $lte: targetDateEnd };
+        }
+        const [cCount, dCount] = await Promise.all([
+          Collection.countDocuments(teamFilter),
+          Distribution.countDocuments(teamFilter)
+        ]);
+        const hasSubmitted = (cCount > 0 || dCount > 0 || (t.leaderEntersOverallCollection && (t.overallCollectedAmount || 0) > 0));
+        return {
+          _id: t._id,
+          name: t.name,
+          hasSubmitted
+        };
+      })
+    );
+
+    const rankingPeriodTitle = req.query.periodTitle || (
+      req.query.dateScope === '3_days' ? '3 Days Collections' :
+      req.query.dateScope === '1_day' || req.query.dateScope === 'today' ? '1 Day Collections' :
+      req.query.dateScope === 'cumulative' ? 'Total Collections Ranking' :
+      'Collections Ranking'
+    );
+
     const generatedText = buildCustomWhatsAppReport({
+      teamSubmissions,
+      rankingPeriodTitle,
       reportType: activeReportType,
       dateStr: displayDateStr,
       scopeTitle,

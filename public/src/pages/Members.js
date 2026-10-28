@@ -295,10 +295,7 @@ export default function Members() {
       if (window.showToast) window.showToast('Please deactivate this account before deleting.', 'error');
       return;
     }
-    const confirmed = window.confirm(
-      `Permanently delete account @${m.username} (${m.fullName})?\n\nThis action cannot be undone.`
-    );
-    if (!confirmed) return;
+    // Direct permanent deletion
 
     try {
       const res = await api.delete(`/api/users/${m._id}`);
@@ -313,7 +310,6 @@ export default function Members() {
   // Toggle Active / Deactivated
   const handleToggleActive = async (m) => {
     const action = m.isActive !== false ? 'deactivate' : 'activate';
-    if (!confirm(`Are you sure you want to ${action} ${m.fullName}'s account?`)) return;
 
     try {
       const res = await api.put(`/api/users/${m._id}/toggle-active`);
@@ -571,7 +567,7 @@ export default function Members() {
 
       <!-- ONE-TIME CREDENTIAL SHARING MODAL -->
       ${oneTimeCreds ? html`
-        <div class="modal-overlay" onClick=${() => setOneTimeCreds(null)}>
+        <div class="modal-overlay" style="z-index: 9999; position: fixed; inset: 0;" onClick=${(e) => { if (e.target === e.currentTarget) setOneTimeCreds(null); }}>
           <div class="modal" onClick=${(e) => e.stopPropagation()} style="border-top: 4px solid #10b981;">
             <div class="modal-header">
               <div class="modal-title" style="color: #065f46;">
@@ -636,7 +632,7 @@ export default function Members() {
 
       <!-- CREATE USER MODAL -->
       ${showAddUser ? html`
-        <div class="modal-overlay" onClick=${() => setShowAddUser(false)}>
+        <div class="modal-overlay" style="z-index: 9999; position: fixed; inset: 0;" onClick=${(e) => { if (e.target === e.currentTarget) setShowAddUser(false); }}>
           <div class="modal" onClick=${(e) => e.stopPropagation()}>
             <div class="modal-header">
               <div class="modal-title">
@@ -765,7 +761,7 @@ export default function Members() {
 
       <!-- EDIT USER MODAL -->
       ${editingUser ? html`
-        <div class="modal-overlay" onClick=${() => setEditingUser(null)}>
+        <div class="modal-overlay" style="z-index: 9999; position: fixed; inset: 0;" onClick=${(e) => { if (e.target === e.currentTarget) setEditingUser(null); }}>
           <div class="modal" onClick=${(e) => e.stopPropagation()}>
             <div class="modal-header">
               <div class="modal-title">Edit Account: ${editingUser.fullName}</div>
@@ -842,7 +838,7 @@ export default function Members() {
 
       <!-- OVERALL MEMBER TARGET MODAL (Super Admin) -->
       ${showOverallTargetModal ? html`
-        <div class="modal-overlay" onClick=${() => setShowOverallTargetModal(false)}>
+        <div class="modal-overlay" style="z-index: 9999; position: fixed; inset: 0;" onClick=${(e) => { if (e.target === e.currentTarget) setShowOverallTargetModal(false); }}>
           <div class="modal" onClick=${(e) => e.stopPropagation()}>
             <div class="modal-header">
               <div class="modal-title">🎯 Set Overall Target for All Members</div>
@@ -879,7 +875,7 @@ export default function Members() {
 
       <!-- RESET PASSWORD MODAL -->
       ${resetPassUser ? html`
-        <div class="modal-overlay" onClick=${() => setResetPassUser(null)}>
+        <div class="modal-overlay" style="z-index: 9999; position: fixed; inset: 0;" onClick=${(e) => { if (e.target === e.currentTarget) setResetPassUser(null); }}>
           <div class="modal" onClick=${(e) => e.stopPropagation()}>
             <div class="modal-header">
               <div class="modal-title">Reset Password: ${resetPassUser.fullName}</div>
@@ -911,7 +907,7 @@ export default function Members() {
 
       <!-- RESET PIN MODAL -->
       ${resetPinUser ? html`
-        <div class="modal-overlay" onClick=${() => setResetPinUser(null)}>
+        <div class="modal-overlay" style="z-index: 9999; position: fixed; inset: 0;" onClick=${(e) => { if (e.target === e.currentTarget) setResetPinUser(null); }}>
           <div class="modal" onClick=${(e) => e.stopPropagation()}>
             <div class="modal-header">
               <div class="modal-title">Reset 4-Digit PIN: ${resetPinUser.fullName}</div>
@@ -941,7 +937,7 @@ export default function Members() {
 
       <!-- ALLOCATE STOCK MODAL -->
       ${selectedMember ? html`
-        <div class="modal-overlay" onClick=${() => setSelectedMember(null)}>
+        <div class="modal-overlay" style="z-index: 9999; position: fixed; inset: 0;" onClick=${(e) => { if (e.target === e.currentTarget) setSelectedMember(null); }}>
           <div class="modal" onClick=${(e) => e.stopPropagation()}>
             <div class="modal-header">
               <div class="modal-title">Allocate Calendars to ${selectedMember.fullName}</div>
@@ -1149,7 +1145,7 @@ export default function Members() {
                       type="button"
                       class="btn btn-secondary btn-sm"
                       style="font-size: 11px; padding: 4px 8px;"
-                      onClick=${() => setResetPassUser(m)}
+                      onClick=${(e) => { e.stopPropagation(); setResetPassUser(m); }}
                       title="Reset Password"
                     >
                       🔑 Reset Pass
@@ -1159,7 +1155,7 @@ export default function Members() {
                       type="button"
                       class="btn btn-secondary btn-sm"
                       style="font-size: 11px; padding: 4px 8px;"
-                      onClick=${() => setResetPinUser(m)}
+                      onClick=${(e) => { e.stopPropagation(); setResetPinUser(m); }}
                       title="Reset PIN"
                     >
                       🔢 Reset PIN
@@ -1169,7 +1165,7 @@ export default function Members() {
                       type="button"
                       class="btn btn-secondary btn-sm"
                       style="font-size: 11px; padding: 4px 8px;"
-                      onClick=${() => openEditUser(m)}
+                      onClick=${(e) => { e.stopPropagation(); openEditUser(m); }}
                     >
                       ✏️ Edit
                     </button>
@@ -1178,7 +1174,7 @@ export default function Members() {
                       type="button"
                       class="btn btn-outline btn-sm"
                       style="font-size: 11px; padding: 4px 8px; color: ${isInactive ? '#059669' : '#dc2626'}; border-color: ${isInactive ? '#a7f3d0' : '#fca5a5'};"
-                      onClick=${() => handleToggleActive(m)}
+                      onClick=${(e) => { e.stopPropagation(); handleToggleActive(m); }}
                     >
                       ${isInactive ? 'Activate' : 'Deactivate'}
                     </button>
@@ -1187,7 +1183,7 @@ export default function Members() {
                         type="button"
                         class="btn btn-outline btn-sm"
                         style="font-size: 11px; padding: 4px 8px; color: #dc2626; border-color: #fca5a5; font-weight: 700;"
-                        onClick=${() => handleDeleteUser(m)}
+                        onClick=${(e) => { e.stopPropagation(); handleDeleteUser(m); }}
                         title="Permanently Delete Inactive Account"
                       >
                         🗑️ Delete Account
@@ -1200,7 +1196,8 @@ export default function Members() {
                       type="button"
                       class="btn btn-outline btn-sm"
                       style="font-size: 11px; padding: 4px 8px; margin-left: auto;"
-                      onClick=${() => {
+                      onClick=${(e) => {
+                        e.stopPropagation();
                         setSelectedMember(m);
                         setAllocQty('');
                       }}

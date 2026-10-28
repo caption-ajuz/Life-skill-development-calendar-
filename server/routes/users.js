@@ -413,6 +413,11 @@ router.put('/:id', async (req, res) => {
 
     await user.save();
 
+    if (assignedRole === 'team_leader' && assignedTeamId) {
+      const Team = (await import('../models/Team.js')).default;
+      await Team.findByIdAndUpdate(assignedTeamId, { leaderId: user._id });
+    }
+
     await logAudit({
       entityType: 'user',
       entityId: user._id,
@@ -638,7 +643,11 @@ router.put('/:id/reset-password', async (req, res) => {
 // PUT /api/users/:id/reset-pin - Super admin or Team Leader (independent PIN reset)
 router.put('/:id/reset-pin', async (req, res) => {
   try {
-    const { id } = req.params;
+    let { id } = req.params;
+    if (id === 'me' || id === 'self') {
+      id = req.user._id ? req.user._id.toString() : '';
+    }
+
     const { newPin } = req.body;
 
     if (!isValidObjectId(id)) {
@@ -650,14 +659,16 @@ router.put('/:id/reset-pin', async (req, res) => {
       return res.status(404).json({ success: false, error: 'User not found.' });
     }
 
-    const isSuperAdmin = req.user.role === 'super_admin';
-    const isTeamLeader = req.user.role === 'team_leader';
+    const isSelf = req.user && req.user._id && (req.user._id.toString() === user._id.toString());
+    const isSuperAdmin = req.user && req.user.role === 'super_admin';
+    const isTeamLeader = req.user && req.user.role === 'team_leader';
 
-    if (!isSuperAdmin && !isTeamLeader) {
+    // Users can always update their OWN PIN. Super admins can update ANY PIN. Team leaders can update their team members' PINs.
+    if (!isSelf && !isSuperAdmin && !isTeamLeader) {
       return res.status(403).json({ success: false, error: 'Permission denied.' });
     }
 
-    if (isTeamLeader) {
+    if (!isSelf && isTeamLeader) {
       const leaderTeamId = req.user.teamId ? (req.user.teamId._id || req.user.teamId).toString() : null;
       const userTeamId = user.teamId ? (user.teamId._id || user.teamId).toString() : null;
       if (leaderTeamId !== userTeamId || user.role !== 'team_member') {

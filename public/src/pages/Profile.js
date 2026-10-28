@@ -241,7 +241,8 @@ export default function Profile() {
     }
     setSavingPin(true);
     try {
-      await api.put(`/api/users/${targetUserId}/reset-pin`, {
+      const resolvedId = targetUserId || (loggedInUser ? loggedInUser._id : null) || 'me';
+      await api.put(`/api/users/${resolvedId}/reset-pin`, {
         newPin: newPin.trim()
       });
       if (window.showToast) window.showToast('Quick PIN updated successfully! ✓', 'success');

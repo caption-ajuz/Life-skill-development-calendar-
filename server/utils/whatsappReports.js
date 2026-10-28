@@ -1,3 +1,7 @@
+export function formatNumber(val) {
+  const num = Math.round(Number(val) || 0);
+  return num.toLocaleString('en-IN');
+}
 export function buildProgressBar(pct) {
   const percent = Math.min(100, Math.max(0, Math.round(pct || 0)));
   const filled = Math.min(10, Math.max(0, Math.round(percent / 10)));
@@ -58,6 +62,8 @@ export function assignRanks(list, valueKey = 'distributed') {
  * - Strict team scoping for Team Leaders
  */
 export function buildCustomWhatsAppReport({
+  teamSubmissions = [],
+  rankingPeriodTitle = '',
   memberMetrics = null,
   reportType = 'daily', // 'daily' | 'overall' | 'team' | 'member' | 'area'
   dateStr = '',
@@ -299,7 +305,7 @@ export function buildCustomWhatsAppReport({
           lines.push(`- Target: ${formatINR(lTarget)}`);
           lines.push(`- Collected: ${formatINR(lCollected)}`);
           lines.push(`- Remaining: ${formatINR(lRemaining)}`);
-          lines.push(`- Progress: ${lPct}%`);
+          lines.push(`- Progress: ${lPct}% ${sections.includeProgressBar ? buildProgressBar(lPct) : ''}`);
           lines.push(``);
         }
 
@@ -323,7 +329,7 @@ export function buildCustomWhatsAppReport({
             lines.push(`- Target: ${formatINR(m.target)}`);
             lines.push(`- Collected: ${formatINR(m.collected)}`);
             lines.push(`- Remaining: ${formatINR(m.remaining)}`);
-            lines.push(`- Progress: ${m.progress}%`);
+            lines.push(`- Progress: ${m.progress}% ${sections.includeProgressBar ? buildProgressBar(m.progress) : ''}`);
             lines.push(``);
           });
         }
@@ -357,12 +363,90 @@ export function buildCustomWhatsAppReport({
             lines.push(`- Target: ${formatINR(m.target)}`);
             lines.push(`- Collected: ${formatINR(m.collected)}`);
             lines.push(`- Remaining: ${formatINR(m.remaining)}`);
-            lines.push(`- Progress: ${m.progress}%`);
+            lines.push(`- Progress: ${m.progress}% ${sections.includeProgressBar ? buildProgressBar(m.progress) : ''}`);
             lines.push(``);
           });
         }
       }
     }
+  }
+
+  
+  // Daily Team Submission Status (ഇന്നത്തെ കണക്ക് ലഭിച്ചത്)
+  if (sections.includeTeamSubmissionStatus && teamSubmissions && teamSubmissions.length > 0) {
+    lines.push("📋 *ഇന്നത്തെ കണക്ക് ലഭിച്ചത്*");
+    lines.push(dateStr ? dateStr : new Date().toLocaleDateString('en-IN'));
+    lines.push("");
+    teamSubmissions.forEach((t) => {
+      const cleanName = t.name.replace(/^Team\s+/i, '');
+      const mark = t.hasSubmitted ? "✅" : "❌";
+      lines.push(`* ${cleanName} ${mark}`);
+    });
+    lines.push("");
+  }
+
+  // Dedicated 1 Day / 3 Days / Multi-Day Collections Ranking (₹ Highest to Lowest)
+  if (sections.includeCollectionRanking && canViewFinancials) {
+    const periodTitle = rankingPeriodTitle || (reportType === 'daily' ? '1 Day Collections' : 'Collections Ranking');
+    lines.push(`*${periodTitle}*`);
+    lines.push("");
+    let allRankList = [];
+    teamsData.forEach((team) => {
+      (team.members || []).forEach((m) => {
+        allRankList.push({
+          name: m.name,
+          teamName: team.name,
+          target: m.target !== undefined && m.target !== null ? m.target : 25000,
+          collected: m.collected || 0,
+          progress: (m.target || 25000) > 0 ? Math.round(((m.collected || 0) / (m.target || 25000)) * 100) : 0
+        });
+      });
+    });
+    allRankList.sort((a, b) => (b.collected || 0) - (a.collected || 0));
+    if (allRankList.length === 0) {
+      lines.push("_No member collection records found._");
+    } else {
+      const medals = ["🥇", "🥈", "🥉"];
+      allRankList.forEach((m, idx) => {
+        const medal = idx < 3 ? ` ${medals[idx]}` : '';
+        const padding = ' '.repeat(Math.max(2, 16 - (m.name || '').length));
+        lines.push(`${m.name}${padding}: ${formatINR(m.collected)}${medal}`);
+        if (sections.includeProgressBar) {
+          lines.push(`   ${buildProgressBar(m.progress)}`);
+        }
+      });
+    }
+    lines.push("");
+  }
+
+  // Top Performers 🥇🥈🥉
+  if (sections.includeTopPerformers && canViewFinancials) {
+    lines.push("🌟 *TOP PERFORMERS 🥇🥈🥉*");
+    lines.push("");
+    let topList = [];
+    teamsData.forEach((team) => {
+      (team.members || []).forEach((m) => {
+        if ((m.collected || 0) > 0) {
+          const target = m.target !== undefined && m.target !== null ? m.target : 25000;
+          const progress = target > 0 ? Math.round(((m.collected || 0) / target) * 100) : 0;
+          topList.push({ name: m.name, teamName: team.name, collected: m.collected || 0, progress });
+        }
+      });
+    });
+    topList.sort((a, b) => b.collected - a.collected);
+    const topThree = topList.slice(0, 3);
+    if (topThree.length === 0) {
+      lines.push("_No collections recorded yet._");
+    } else {
+      const medals = ["🥇 1st: ", "🥈 2nd: ", "🥉 3rd: "];
+      topThree.forEach((m, idx) => {
+        lines.push(`${medals[idx]}*${m.name}* (${m.teamName}) — ${formatINR(m.collected)}`);
+        if (sections.includeProgressBar) {
+          lines.push(`   ${buildProgressBar(m.progress)}`);
+        }
+      });
+    }
+    lines.push("");
   }
 
   // 4. Campaign Total or Team Total

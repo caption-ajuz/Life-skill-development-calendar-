@@ -413,6 +413,41 @@ export default function Dashboard() {
           <div style="font-size: 12px; opacity: 0.8; margin-top: 4px;">Leader: ${user.fullName}</div>
         </div>
 
+        
+        <!-- Team Leader Direct Action Buttons (Collect Money & Distribute Calendars) -->
+        <div class="card" style="margin-bottom: 12px; padding: 12px; background: white; border-top: 3px solid #0891b2;">
+          <div style="font-size: 12px; font-weight: 700; color: #475569; text-transform: uppercase; margin-bottom: 8px;">
+            ⚡ Quick Entry & WhatsApp Sharing
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
+            <a
+              href="#/collections?action=new"
+              class="btn btn-primary"
+              style="background: #059669; border-color: #059669; font-size: 13px; padding: 10px 8px; display: flex; align-items: center; justify-content: center; gap: 6px; text-decoration: none; font-weight: 700;"
+            >
+              <span>💰</span>
+              <span>+ Collect Money</span>
+            </a>
+            <a
+              href="#/distributions?action=new"
+              class="btn btn-primary"
+              style="background: #0284c7; border-color: #0284c7; font-size: 13px; padding: 10px 8px; display: flex; align-items: center; justify-content: center; gap: 6px; text-decoration: none; font-weight: 700;"
+            >
+              <span>📦</span>
+              <span>+ Distribute</span>
+            </a>
+          </div>
+          <button
+            type="button"
+            class="btn btn-outline btn-full"
+            style="color: #15803d; border-color: #86efac; background: #f0fdf4; font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 6px;"
+            onClick=${() => handleShareTeamWhatsApp(d)}
+          >
+            <span>📲</span>
+            <span>Share Team Member Cash to WhatsApp</span>
+          </button>
+        </div>
+
         <!-- Pending Member Approvals Queue (CRITICAL REVIEW ACTION) -->
         ${totalPending > 0 ? html`
           <div class="card" style="border-left: 4px solid #f59e0b; background: #fffbeb;">

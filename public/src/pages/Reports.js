@@ -134,6 +134,21 @@ export default function Reports() {
   const handleDatePreset = (preset) => {
     setDateScope(preset);
     const now = new Date();
+    if (preset === '1_day' || preset === 'today') {
+      setDateScope('1_day');
+      setSingleDate(now.toISOString().split('T')[0]);
+      return;
+    } else if (preset === '3_days') {
+      setDateScope('3_days');
+      const start = new Date(now);
+      start.setDate(start.getDate() - 2);
+      setRangeFrom(start.toISOString().split('T')[0]);
+      setRangeTo(now.toISOString().split('T')[0]);
+      return;
+    } else if (preset === 'cumulative') {
+      setDateScope('cumulative');
+      return;
+    }
     if (preset === 'today') {
       setSingleDate(now.toISOString().split('T')[0]);
     } else if (preset === 'yesterday') {
@@ -165,6 +180,8 @@ export default function Reports() {
         includeBreakdown: includeBreakdown ? 'true' : 'false',
         includeLeaderboard: includeBreakdown ? 'true' : 'false',
         includeCollectionRanking: includeCollectionRanking ? 'true' : 'false',
+        includeTeamSubmissionStatus: includeTeamSubmissionStatus ? 'true' : 'false',
+        periodTitle: dateScope === '3_days' ? '3 Days Collections' : dateScope === '1_day' ? '1 Day Collections' : undefined,
         includeTargetProgress: includeTargetProgress ? 'true' : 'false',
         selectedTeamOnly: selectedTeamOnly ? 'true' : 'false',
         selectedTeamId: selectedTeamId || undefined,
@@ -773,6 +790,16 @@ export default function Reports() {
                   onChange=${(e) => setIncludeHeader(e.target.checked)}
                 />
                 <span>Header & Logo</span>
+              <!-- Daily Team Submission Status (Malayalam) -->
+              <label style="display: flex; align-items: center; gap: 7px; padding: 6px 8px; border: 1px solid #10b981; border-radius: 6px; cursor: pointer; background: #ecfdf5; grid-column: span 2;">
+                <input
+                  type="checkbox"
+                  checked=${includeTeamSubmissionStatus}
+                  onChange=${(e) => setIncludeTeamSubmissionStatus(e.target.checked)}
+                />
+                <span style="font-weight: 700; color: #065f46;">📋 ഇന്നത്തെ കണക്ക് ലഭിച്ചത് (Team Submission Status)</span>
+              </label>
+
               </label>
 
               <label style="display: flex; align-items: center; gap: 7px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; background: var(--bg-card);">

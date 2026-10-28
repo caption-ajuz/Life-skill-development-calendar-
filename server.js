@@ -147,6 +147,14 @@ app.use('/api/corrections', correctionsRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/campaigns', campaignsRouter);
 
+// API 404 Handler: Guarantee JSON response for all undefined API endpoints
+app.all('/api/*', (req, res) => {
+  res.status(404).json({
+    success: false,
+    error: `API route not found: ${req.method} ${req.originalUrl}`
+  });
+});
+
 // SPA Fallback: Serve index.html for all non-API GET requests
 app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api/')) {
