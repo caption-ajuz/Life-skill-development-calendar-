@@ -84,11 +84,8 @@ export default function Stock() {
       return;
     }
 
+    // Auto-expand central stock if allocation exceeds currently unallocated quantity
     const availableCentral = summary ? (summary.unallocatedCampaignStock || 0) : 0;
-    if (qty > availableCentral) {
-      if (window.showToast) window.showToast(`Allocation exceeds central stock. Maximum available: ${availableCentral}`, 'error');
-      return;
-    }
 
     setSubmittingTeam(true);
     // Generate an idempotent submission key
@@ -659,7 +656,7 @@ export default function Stock() {
                     <input
                       type="number"
                       min="1"
-                      max=${s.unallocatedCampaignStock || 0}
+                      max="99999"
                       class="form-input"
                       placeholder="e.g. 500"
                       value=${teamAllocQty}
@@ -683,12 +680,10 @@ export default function Stock() {
                 <button
                   type="submit"
                   class="btn btn-primary btn-full"
-                  disabled=${submittingTeam || (s.unallocatedCampaignStock || 0) <= 0}
+                  disabled=${submittingTeam || !selectedTeamId}
                 >
                   ${submittingTeam
                     ? 'Saving Allocation...'
-                    : (s.unallocatedCampaignStock || 0) <= 0
-                    ? 'Central Stock Depleted'
                     : 'Allocate Stock to Team ✓'}
                 </button>
               </form>

@@ -25,6 +25,12 @@ const expenseSchema = new mongoose.Schema(
       default: Date.now,
       index: true
     },
+    campaignId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Campaign',
+      default: null,
+      index: true
+    },
     teamId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Team',

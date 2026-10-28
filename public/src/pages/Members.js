@@ -289,6 +289,27 @@ export default function Members() {
     }
   };
 
+    // Permanently delete inactive account (Super Admin only)
+  const handleDeleteUser = async (m) => {
+    if (m.isActive !== false) {
+      if (window.showToast) window.showToast('Please deactivate this account before deleting.', 'error');
+      return;
+    }
+    const confirmed = window.confirm(
+      `Permanently delete account @${m.username} (${m.fullName})?\n\nThis action cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    try {
+      const res = await api.delete(`/api/users/${m._id}`);
+      if (res && res.success) {
+        if (window.showToast) window.showToast(`Account @${m.username} deleted permanently.`, 'success');
+        loadData();
+      }
+    } catch (err) {
+      if (window.showToast) window.showToast(err.message || 'Failed to delete account.', 'error');
+    }
+  };
   // Toggle Active / Deactivated
   const handleToggleActive = async (m) => {
     const action = m.isActive !== false ? 'deactivate' : 'activate';
@@ -928,6 +949,11 @@ export default function Members() {
             </div>
 
             <!-- Current Stock Stats for Member -->
+            ${!selectedMember.teamId ? html`
+              <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; font-size: 12px; color: #166534;">
+                💡 <b>Independent Collector:</b> Calendars will be allocated directly from Central Campaign Stock.
+              </div>
+            ` : ''}
             <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; margin-bottom: 12px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; text-align: center;">
               <div>
                 <div style="font-size: 10px; color: var(--text-secondary); text-transform: uppercase;">Total Received</div>
@@ -1156,6 +1182,17 @@ export default function Members() {
                     >
                       ${isInactive ? 'Activate' : 'Deactivate'}
                     </button>
+                    ${isInactive && isSuperAdmin ? html`
+                      <button
+                        type="button"
+                        class="btn btn-outline btn-sm"
+                        style="font-size: 11px; padding: 4px 8px; color: #dc2626; border-color: #fca5a5; font-weight: 700;"
+                        onClick=${() => handleDeleteUser(m)}
+                        title="Permanently Delete Inactive Account"
+                      >
+                        🗑️ Delete Account
+                      </button>
+                    ` : ''}
                   ` : ''}
 
                   ${isSuperAdmin || isLeader ? html`

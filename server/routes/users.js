@@ -801,4 +801,49 @@ router.delete('/:id/password', requireRole('super_admin'), async (req, res) => {
   }
 });
 
+// DELETE /api/users/:id - Permanently delete inactive account (Super Admin only)
+router.delete('/:id', requireRole('super_admin'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!isValidObjectId(id)) {
+      return res.status(400).json({ success: false, error: 'Invalid user ID.' });
+    }
+    const user = await User.findById(id);
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found.' });
+    }
+    if (user.role === 'super_admin' || user.username === 'ajash.admin') {
+      return res.status(403).json({ success: false, error: 'Cannot delete the Super Admin account.' });
+    }
+    if (user.isActive) {
+      return res.status(400).json({
+        success: false,
+        error: 'Only inactive accounts can be permanently deleted. Please deactivate this account first.'
+      });
+    }
+
+    const Team = (await import('../models/Team.js')).default;
+    await Team.updateMany({ leaderId: id }, { $set: { leaderId: null } });
+
+    await User.findByIdAndDelete(id);
+
+    await logAudit({
+      entityType: 'user',
+      entityId: id,
+      action: 'delete',
+      oldValues: { username: user.username, fullName: user.fullName, role: user.role },
+      performedBy: req.user._id,
+      ipAddress: req.ip
+    });
+
+    return res.json({
+      success: true,
+      message: `User account @${user.username} (${user.fullName}) permanently deleted.`
+    });
+  } catch (err) {
+    console.error('Delete user error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to delete user account.' });
+  }
+});
+
 export default router;

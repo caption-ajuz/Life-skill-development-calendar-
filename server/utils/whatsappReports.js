@@ -1,3 +1,10 @@
+export function buildProgressBar(pct) {
+  const percent = Math.min(100, Math.max(0, Math.round(pct || 0)));
+  const filled = Math.min(10, Math.max(0, Math.round(percent / 10)));
+  const empty = 10 - filled;
+  return "[" + "▓".repeat(filled) + "░".repeat(empty) + "] " + percent + "%";
+}
+
 /**
  * WhatsApp Report Builder & Formatter for Life Skill Course Campaign
  * Markazul Hidayathil Islamiyya — Annual Calendar Camp
@@ -51,13 +58,19 @@ export function assignRanks(list, valueKey = 'distributed') {
  * - Strict team scoping for Team Leaders
  */
 export function buildCustomWhatsAppReport({
+  memberMetrics = null,
   reportType = 'daily', // 'daily' | 'overall' | 'team' | 'member' | 'area'
   dateStr = '',
   scopeTitle = 'All Teams (Campaign-Wide)',
+  campaignName = '',
+  selectedTeamOnly = false,
+  selectedTeamName = '',
+  topCollectors = [],
+  topCollectorsLimit = 10,
   role = 'super_admin',
   campaignConfig = { totalStock: 5000, calendarPrice: 100 },
-  teamsData = [], // [{ name, distributed, collected, members: [{ name, distributed, collected }] }]
-  items = [], // fallback flat items if teamsData is not structured
+  teamsData = [],
+  items = [],
   totals = {
     distributed: 0,
     collected: 0,
@@ -73,6 +86,7 @@ export function buildCustomWhatsAppReport({
     includeBreakdown: true,
     includeLeaderboard: true,
     includeCollectionRanking: false,
+    includeTopCollectors: false,
     includeHandoverStatus: true,
     includeZeroActivity: false,
     includeOfflineNotice: true,
@@ -83,6 +97,25 @@ export function buildCustomWhatsAppReport({
 }) {
   const note = (customNote || customFooterNote || '').trim();
   const lines = [];
+  // Dedicated Individual Member Metrics Report
+  if (reportType === "member" && memberMetrics) {
+    lines.push("👤 *INDIVIDUAL MEMBER METRICS REPORT*");
+    lines.push("");
+    lines.push("*Member Name:* " + (memberMetrics.fullName || memberMetrics.name || "Member"));
+    lines.push("*Team:* " + (memberMetrics.teamName || "Independent Collector"));
+    lines.push("*Role:* " + (memberMetrics.role || "Member").replace("_", " ").toUpperCase());
+    lines.push("*Phone:* " + (memberMetrics.phone || "N/A"));
+    lines.push("");
+    lines.push("*Performance Metrics:*");
+    lines.push("- Calendars Distributed: " + formatNumber(memberMetrics.distributed || 0) + " units");
+    lines.push("- Approved Collections: " + formatINR(memberMetrics.collected || 0));
+    lines.push("- Collection Target: " + formatINR(memberMetrics.target || 25000));
+    lines.push("- Remaining to Target: " + formatINR(Math.max(0, (memberMetrics.target || 25000) - (memberMetrics.collected || 0))));
+    const memPct = (memberMetrics.target || 25000) > 0 ? Math.round(((memberMetrics.collected || 0) / (memberMetrics.target || 25000)) * 100) : 0;
+    lines.push("- Target Progress: " + buildProgressBar(memPct));
+    lines.push("");
+  }
+
 
   const canViewFinancials = ['super_admin', 'usthad', 'team_leader'].includes(role);
   const isSingleTeam = reportType === 'team' || role === 'team_leader' || (teamsData && teamsData.length === 1);
@@ -90,7 +123,15 @@ export function buildCustomWhatsAppReport({
   // 1. Header
   if (sections.includeHeader !== false) {
     lines.push(`📅 *LIFE SKILL COURSE — CALENDAR CAMP*`);
-    lines.push(``);
+    if (campaignName) {
+      lines.push(`🎯 *Campaign:* ${campaignName}`);
+    }
+    if (selectedTeamOnly && (selectedTeamName || (teamsData.length === 1 && teamsData[0].name))) {
+      const tName = selectedTeamName || teamsData[0].name;
+      lines.push(`👥 *Team-wise Report:* ${tName} (Selected Team Members Only)`);
+    } else if (scopeTitle && scopeTitle !== 'All Teams (Campaign-Wide)') {
+      lines.push(`📍 *Scope:* ${scopeTitle}`);
+    }
     lines.push(`Date: ${dateStr || new Date().toLocaleDateString('en-IN')}`);
     lines.push(``);
   }
@@ -183,6 +224,55 @@ export function buildCustomWhatsAppReport({
         lines.push(`${formatRankBadge(m.rank)}${m.name} — ${formatQty(m.distributed)} calendars`);
       });
       lines.push(``);
+    }
+  }
+
+  // Top Collectors Section
+  if ((sections.includeTopCollectors || sections.showTopCollectors) && canViewFinancials) {
+    lines.push(`🌟 *TOP COLLECTORS*`);
+    lines.push(``);
+
+    let listToRank = [];
+    if (topCollectors && topCollectors.length > 0) {
+      listToRank = topCollectors;
+    } else {
+      teamsData.forEach((team) => {
+        (team.members || []).forEach((m) => {
+          if ((m.collected || 0) > 0) {
+            const target = m.target !== undefined && m.target !== null ? m.target : 25000;
+            const collected = m.collected || 0;
+            const remaining = Math.max(0, target - collected);
+            const progress = target > 0 ? Math.round((collected / target) * 100) : 0;
+            listToRank.push({
+              name: m.name,
+              teamName: team.name,
+              target,
+              collected,
+              remaining,
+              progress
+            });
+          }
+        });
+      });
+    }
+
+    const rankedCollectors = assignRanks(listToRank, 'collected');
+    const limit = topCollectorsLimit > 0 ? parseInt(topCollectorsLimit, 10) : rankedCollectors.length;
+    const displayedCollectors = rankedCollectors.slice(0, limit);
+
+    if (displayedCollectors.length === 0) {
+      lines.push(`_No approved collections recorded yet._`);
+      lines.push(``);
+    } else {
+      displayedCollectors.forEach((m) => {
+        const teamSuffix = (!selectedTeamOnly && m.teamName && m.teamName !== 'Independent Member' && m.teamName !== 'No Team') ? ` (${m.teamName})` : (m.teamName ? ` (${m.teamName})` : '');
+        lines.push(`${getMedal(m.rank)}*${m.name}*${teamSuffix}`);
+        lines.push(`- Approved Collection: ${formatINR(m.collected)}`);
+        lines.push(`- Target: ${formatINR(m.target)}`);
+        lines.push(`- Remaining: ${formatINR(m.remaining)}`);
+        lines.push(`- Achieved: ${m.progress}%`);
+        lines.push(``);
+      });
     }
   }
 

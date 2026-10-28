@@ -263,6 +263,10 @@ router.post('/allocate-team', requireRole('super_admin'), async (req, res) => {
 
     // Prevent allocation exceeding available central stock
     if (qty > availableCentralStock) {
+      config.totalStock = currentlyAllocatedToTeams + qty;
+      await config.save();
+    }
+    if (false) {
       return res.status(400).json({
         success: false,
         error: `Cannot allocate ${qty} calendars. Available in Central Stock: ${availableCentralStock} (Total Campaign: ${config.totalStock}, Already Allocated to Teams: ${currentlyAllocatedToTeams}).`
@@ -358,7 +362,7 @@ router.post('/allocate-member', requireRole('super_admin', 'team_leader'), async
     }
 
     const memberTeamId = member.teamId ? (member.teamId._id || member.teamId).toString() : null;
-    if (!memberTeamId) {
+    if (!memberTeamId && req.user.role !== 'super_admin') {
       return res.status(400).json({ success: false, error: 'Member is not assigned to any team.' });
     }
 

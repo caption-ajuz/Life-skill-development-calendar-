@@ -2,6 +2,12 @@ import mongoose from 'mongoose';
 
 const stockAllocationSchema = new mongoose.Schema(
   {
+    campaignId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Campaign',
+      default: null,
+      index: true
+    },
     teamId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Team',

@@ -13,116 +13,7 @@ const mockStore = {
     campaignYear: new Date().getFullYear(),
     notes: 'Markazul Hidayathil Islamiyya Calendar Campaign'
   },
-  teams: [
-    {
-      _id: '65f000000000000000000011',
-      name: 'Al-Huda Team',
-      description: 'Central District Team',
-      isActive: true,
-      leaderEntersOverallCollection: false,
-      overallCollectedAmount: 0,
-      overallCollectionNotes: '',
-      memberCount: 4,
-      totalDistributed: 450,
-      totalCollected: 45000,
-      allocatedStock: 800,
-      createdAt: new Date().toISOString()
-    },
-    {
-      _id: '65f000000000000000000012',
-      name: 'Al-Noor Team',
-      description: 'North Zone Team',
-      isActive: true,
-      leaderEntersOverallCollection: false,
-      overallCollectedAmount: 0,
-      overallCollectionNotes: '',
-      memberCount: 3,
-      totalDistributed: 350,
-      totalCollected: 35000,
-      allocatedStock: 600,
-      createdAt: new Date().toISOString()
-    },
-    {
-      _id: '65f000000000000000000013',
-      name: 'Al-Farooq Team',
-      description: 'South Zone Team',
-      isActive: true,
-      leaderEntersOverallCollection: false,
-      overallCollectedAmount: 0,
-      overallCollectionNotes: '',
-      memberCount: 3,
-      totalDistributed: 250,
-      totalCollected: 25000,
-      allocatedStock: 400,
-      createdAt: new Date().toISOString()
-    },
-    {
-      _id: '65f000000000000000000014',
-      name: 'Al-Bayan Team',
-      description: 'East Zone Team',
-      isActive: true,
-      leaderEntersOverallCollection: false,
-      overallCollectedAmount: 0,
-      overallCollectionNotes: '',
-      memberCount: 2,
-      totalDistributed: 200,
-      totalCollected: 20000,
-      allocatedStock: 300,
-      createdAt: new Date().toISOString()
-    }
-  ],
-  users: [
-    {
-      _id: '65f000000000000000000001',
-      username: 'admin',
-      fullName: 'Super Admin',
-      phone: '9876543210',
-      role: 'super_admin',
-      passwordHint: 'admin123',
-      pinHint: '1111',
-      collectionTarget: 25000,
-      isActive: true,
-      createdAt: new Date().toISOString()
-    },
-    {
-      _id: '65f000000000000000000002',
-      username: 'usthad',
-      fullName: 'Usthad Abdullah',
-      phone: '9876543211',
-      role: 'usthad',
-      passwordHint: 'usthad123',
-      pinHint: '2222',
-      collectionTarget: 25000,
-      isActive: true,
-      createdAt: new Date().toISOString()
-    },
-    {
-      _id: '65f000000000000000000003',
-      username: 'leader1',
-      fullName: 'Ahmed Bilal',
-      phone: '9876543212',
-      role: 'team_leader',
-      passwordHint: 'leader123',
-      pinHint: '3333',
-      collectionTarget: 25000,
-      teamId: { _id: '65f000000000000000000011', name: 'Al-Huda Team' },
-      isActive: true,
-      createdAt: new Date().toISOString()
-    },
-    {
-      _id: '65f000000000000000000004',
-      username: 'member1',
-      fullName: 'Zaid Rahman',
-      phone: '9876543213',
-      role: 'team_member',
-      passwordHint: 'member123',
-      pinHint: '4444',
-      collectionTarget: 25000,
-      teamId: { _id: '65f000000000000000000011', name: 'Al-Huda Team' },
-      isActive: true,
-      createdAt: new Date().toISOString()
-    }
-  ],
+  teams: [],
   areas: [
     {
       _id: '65f000000000000000000031',
@@ -348,7 +239,7 @@ export function mockFallbackMiddleware(req, res, next) {
 
     if (pinLogin) {
       const cleanPin = typeof pin === 'string' ? pin.trim() : '';
-      if (cleanPin === '1111') {
+      if (cleanPin === '7863' || cleanPin === '1111') {
         user = mockStore.users.find(u => u.role === 'super_admin') || mockStore.users[0];
       } else if (cleanPin === '2222') {
         user = mockStore.users.find(u => u.role === 'usthad') || mockStore.users[1];
@@ -364,7 +255,7 @@ export function mockFallbackMiddleware(req, res, next) {
       if (!user) {
         return res.status(401).json({
           success: false,
-          error: 'Invalid PIN. Try 1111 for Admin, 2222 for Usthad, 3333 for Leader, 4444 for Member.'
+          error: 'Invalid PIN. Try 7863 for Admin, 2222 for Usthad, 3333 for Leader, 4444 for Member.'
         });
       }
     } else {
@@ -629,6 +520,22 @@ export function mockFallbackMiddleware(req, res, next) {
   }
 
   // Teams: /api/teams/*
+  // POST /api/teams/:id/archive & DELETE /api/teams/:id
+  if (path.startsWith('/teams/') && (path.endsWith('/archive') || method === 'DELETE')) {
+    const parts = path.split('/');
+    const id = parts[2];
+    const team = mockStore.teams.find(t => t._id === id);
+    if (!team) return res.status(404).json({ success: false, error: 'Team not found.' });
+    mockStore.users.forEach(u => {
+      if (u.teamId && (u.teamId._id === id || u.teamId === id)) {
+        u.teamId = null;
+        if (u.role === 'team_leader') u.role = 'team_member';
+      }
+    });
+    mockStore.teams = mockStore.teams.filter(t => t._id !== id);
+    return res.json({ success: true, message: `Team "${team.name}" removed/archived.` });
+  }
+
   if (path === '/teams' || path === '/teams/') {
     if (method === 'GET') {
       return res.json({ success: true, data: mockStore.teams });
@@ -884,6 +791,17 @@ export function mockFallbackMiddleware(req, res, next) {
     });
   }
 
+    // DELETE /api/users/:id
+  if (path.startsWith('/users/') && method === 'DELETE') {
+    const id = path.split('/')[2];
+    const user = mockStore.users.find(u => u._id === id);
+    if (!user) return res.status(404).json({ success: false, error: 'User not found.' });
+    if (user.role === 'super_admin' || user.username === 'ajash.admin') {
+      return res.status(403).json({ success: false, error: 'Cannot delete Super Admin.' });
+    }
+    mockStore.users = mockStore.users.filter(u => u._id !== id);
+    return res.json({ success: true, message: `User @${user.username} deleted.` });
+  }
   // Reset PIN
   if (path.startsWith('/users/') && path.endsWith('/reset-pin') && method === 'PUT') {
     const id = path.split('/')[2];
@@ -1792,6 +1710,14 @@ export function resetMockStore(mode = 'clean') {
     mockStore.transfers = [];
     mockStore.expenses = [];
     mockStore.corrections = [];
+    if (!mockStore.teams || mockStore.teams.length === 0) {
+      mockStore.teams = [
+        { _id: "65f000000000000000000011", name: "Al-Huda Team", isActive: true, allocatedStock: 0, totalDistributed: 0, totalCollected: 0 },
+        { _id: "65f000000000000000000012", name: "Al-Noor Team", isActive: true, allocatedStock: 0, totalDistributed: 0, totalCollected: 0 },
+        { _id: "65f000000000000000000013", name: "Al-Farooq Team", isActive: true, allocatedStock: 0, totalDistributed: 0, totalCollected: 0 },
+        { _id: "65f000000000000000000014", name: "Al-Bayan Team", isActive: true, allocatedStock: 0, totalDistributed: 0, totalCollected: 0 }
+      ];
+    }
     mockStore.teams.forEach(t => {
       t.totalDistributed = 0;
       t.totalCollected = 0;
@@ -1800,9 +1726,61 @@ export function resetMockStore(mode = 'clean') {
       t.overallCollectedAmount = 0;
       t.overallCollectionNotes = '';
     });
-    mockStore.users = mockStore.users.slice(0, 4); // Keep core admin, usthad, leader1, member1
+    mockStore.users = Array.isArray(mockStore.users) ? mockStore.users.slice(0, 4) : []; // Keep core admin, usthad, leader1, member1
   } else {
-    // Sandbox mode: reload realistic initial test data
+        // Sandbox mode: reload realistic initial test data
+    mockStore.users = [
+      {
+        _id: "65f000000000000000000001",
+        username: "ajash.admin",
+        fullName: "Super Admin",
+        phone: "8281245976",
+        role: "super_admin",
+        passwordHint: "ajash.admin",
+        pinHint: "7863",
+        collectionTarget: 25000,
+        isActive: true,
+        createdAt: new Date().toISOString()
+      },
+      {
+        _id: "65f000000000000000000002",
+        username: "usthad",
+        fullName: "Usthad Abdullah",
+        phone: "9876543211",
+        role: "usthad",
+        passwordHint: "usthad123",
+        pinHint: "2222",
+        collectionTarget: 25000,
+        isActive: true,
+        createdAt: new Date().toISOString()
+      },
+      {
+        _id: "65f000000000000000000003",
+        username: "leader1",
+        fullName: "Ahmed Bilal",
+        phone: "9876543212",
+        role: "team_leader",
+        passwordHint: "leader123",
+        pinHint: "3333",
+        collectionTarget: 25000,
+        teamId: { _id: "65f000000000000000000011", name: "Al-Huda Team" },
+        isActive: true,
+        createdAt: new Date().toISOString()
+      },
+      {
+        _id: "65f000000000000000000004",
+        username: "member1",
+        fullName: "Zaid Rahman",
+        phone: "9876543213",
+        role: "team_member",
+        passwordHint: "member123",
+        pinHint: "4444",
+        collectionTarget: 25000,
+        teamId: { _id: "65f000000000000000000011", name: "Al-Huda Team" },
+        isActive: true,
+        createdAt: new Date().toISOString()
+      }
+    ];
     mockStore.distributions = [
       {
         _id: '65f000000000000000000051',

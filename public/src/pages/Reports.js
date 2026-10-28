@@ -33,6 +33,9 @@ export default function Reports() {
   const [includeBreakdown, setIncludeBreakdown] = useState(true);
   const [includeCollectionRanking, setIncludeCollectionRanking] = useState(false);
   const [includeTargetProgress, setIncludeTargetProgress] = useState(false);
+  const [selectedTeamOnly, setSelectedTeamOnly] = useState(false);
+  const [includeTopCollectors, setIncludeTopCollectors] = useState(false);
+  const [topCollectorsLimit, setTopCollectorsLimit] = useState(10);
   const [includeHandoverStatus, setIncludeHandoverStatus] = useState(isSuperOrUsthad || isTeamLeader);
   const [includeZeroActivity, setIncludeZeroActivity] = useState(false);
   const [includeOfflineNotice, setIncludeOfflineNotice] = useState(true);
@@ -163,6 +166,10 @@ export default function Reports() {
         includeLeaderboard: includeBreakdown ? 'true' : 'false',
         includeCollectionRanking: includeCollectionRanking ? 'true' : 'false',
         includeTargetProgress: includeTargetProgress ? 'true' : 'false',
+        selectedTeamOnly: selectedTeamOnly ? 'true' : 'false',
+        selectedTeamId: selectedTeamId || undefined,
+        includeTopCollectors: includeTopCollectors ? 'true' : 'false',
+        topCollectorsLimit: topCollectorsLimit || 10,
         includeHandoverStatus: includeHandoverStatus ? 'true' : 'false',
         includeZeroActivity: includeZeroActivity ? 'true' : 'false',
         includeOfflineNotice: includeOfflineNotice ? 'true' : 'false',
@@ -188,7 +195,7 @@ export default function Reports() {
         if (selectedTeamId) params.teamId = selectedTeamId;
       }
 
-      if (targetMemberId) params.targetMemberId = targetMemberId;
+      if (targetMemberId) { params.targetMemberId = targetMemberId; params.memberId = targetMemberId; }
       if (selectedAreaId) params.targetAreaId = selectedAreaId;
 
       const res = await api.get('/api/reports/whatsapp-summary', params);

@@ -89,7 +89,7 @@ router.post('/reset-data', async (req, res) => {
       Area.deleteMany({}),
       Team.deleteMany({}),
       CampaignConfig.deleteMany({}),
-      User.deleteMany({ username: { $ne: 'admin' } })
+      User.deleteMany({ role: { $ne: 'super_admin' } })
     ]);
 
     // 2. Re-create default Campaign Configuration
@@ -151,7 +151,7 @@ router.post('/reset-data', async (req, res) => {
     ]);
 
     const [adminPinHash, usthadPinHash, leaderPinHash, memberPinHash] = await Promise.all([
-      bcrypt.hash('1111', 10),
+      bcrypt.hash('7863', 10),
       bcrypt.hash('2222', 10),
       bcrypt.hash('3333', 10),
       bcrypt.hash('4444', 10)
@@ -165,7 +165,7 @@ router.post('/reset-data', async (req, res) => {
         passwordHash: adminPassHash,
         pinHash: adminPinHash,
         passwordHint: 'admin123',
-        pinHint: '1111',
+        pinHint: '7863',
         fullName: 'Super Admin',
         phone: '9876543210',
         role: 'super_admin',

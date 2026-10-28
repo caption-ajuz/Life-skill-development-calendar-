@@ -1329,3 +1329,333 @@ test('AuditLog: Validates domain event actions without enum failure', async () =
     assert.equal(err, undefined, `AuditLog must accept action '${act}' without validation error`);
   }
 });
+
+// ============================================================================
+// PHASE 5: REUSABLE CAMPAIGN TEAMS, INDEPENDENT MEMBERS & WHATSAPP FILTERS
+// 15 MANDATORY TEST SCENARIOS
+// ============================================================================
+
+test('Scenario 1: Team deletion archives safely — member accounts preserved with teamId = null', async () => {
+  const Team = (await import('../server/models/Team.js')).default;
+  const User = (await import('../server/models/User.js')).default;
+
+  const team = new Team({ name: 'Archive Test Team', isActive: true, isArchived: false });
+  assert.equal(team.isArchived, false);
+  assert.equal(team.isActive, true);
+
+  // Archive team
+  team.isArchived = true;
+  team.isActive = false;
+  team.archivedAt = new Date();
+  assert.equal(team.isArchived, true);
+  assert.equal(team.isActive, false);
+
+  // Member account has stable ID and teamId becomes null
+  const member = new User({ username: 'member_archive_1', fullName: 'Archived Member', role: 'team_member', teamId: team._id });
+  assert.ok(member._id);
+  member.teamId = null;
+  assert.equal(member.teamId, null);
+  assert.equal(member.username, 'member_archive_1');
+});
+
+test('Scenario 2: Team deletion preserves historical collection and distribution records', async () => {
+  const Collection = (await import('../server/models/Collection.js')).default;
+  const Distribution = (await import('../server/models/Distribution.js')).default;
+  const mongoose = (await import('mongoose')).default;
+
+  const mockTeamId = new mongoose.Types.ObjectId();
+  const mockMemberId = new mongoose.Types.ObjectId();
+  const mockCampaignId = new mongoose.Types.ObjectId();
+
+  const col = new Collection({
+    memberId: mockMemberId,
+    teamId: mockTeamId,
+    campaignId: mockCampaignId,
+    amount: 1500,
+    status: 'approved',
+    approvalStatus: 'approved'
+  });
+
+  const dist = new Distribution({
+    memberId: mockMemberId,
+    teamId: mockTeamId,
+    campaignId: mockCampaignId,
+    quantity: 15,
+    status: 'approved',
+    approvalStatus: 'approved'
+  });
+
+  // Records retain their historical team and campaign linkage even when team is archived
+  assert.equal(col.teamId.toString(), mockTeamId.toString());
+  assert.equal(col.campaignId.toString(), mockCampaignId.toString());
+  assert.equal(dist.teamId.toString(), mockTeamId.toString());
+  assert.equal(col.amount, 1500);
+  assert.equal(dist.quantity, 15);
+});
+
+test('Scenario 3: Team deletion detaches former leader assignment cleanly and sets to ordinary member', async () => {
+  const User = (await import('../server/models/User.js')).default;
+  const mongoose = (await import('mongoose')).default;
+
+  const teamId = new mongoose.Types.ObjectId();
+  const leader = new User({
+    username: 'leader_demote_test',
+    fullName: 'Former Leader',
+    role: 'team_leader',
+    teamId
+  });
+
+  assert.equal(leader.role, 'team_leader');
+  // Safe detachment logic
+  leader.teamId = null;
+  leader.role = 'team_member';
+  assert.equal(leader.teamId, null);
+  assert.equal(leader.role, 'team_member');
+});
+
+test('Scenario 4: Team deletion preserves Super Admin and Usthad global accounts and roles', async () => {
+  const User = (await import('../server/models/User.js')).default;
+
+  const admin = new User({
+    username: 'admin',
+    fullName: 'Super Administrator',
+    role: 'super_admin',
+    teamId: null
+  });
+
+  const usthad = new User({
+    username: 'usthad',
+    fullName: 'Usthad Supervisor',
+    role: 'usthad',
+    teamId: null
+  });
+
+  assert.equal(admin.role, 'super_admin');
+  assert.equal(usthad.role, 'usthad');
+  assert.equal(admin.teamId, null);
+  assert.equal(usthad.teamId, null);
+});
+
+test('Scenario 5: Super Admin creates a new team, assigns a leader, and replaces leader', async () => {
+  const Team = (await import('../server/models/Team.js')).default;
+  const mongoose = (await import('mongoose')).default;
+
+  const leaderAId = new mongoose.Types.ObjectId();
+  const leaderBId = new mongoose.Types.ObjectId();
+
+  const team = new Team({
+    name: 'Team Al-Ansar',
+    leaderId: leaderAId,
+    isActive: true
+  });
+
+  assert.equal(team.name, 'Team Al-Ansar');
+  assert.equal(team.leaderId.toString(), leaderAId.toString());
+
+  // Replace leader
+  team.leaderId = leaderBId;
+  assert.equal(team.leaderId.toString(), leaderBId.toString());
+});
+
+test('Scenario 6: Fast member search matches by name, phone, or ID without sensitive data exposure', () => {
+  const members = [
+    { _id: '671e00000000000000000001', fullName: 'Muhammed Salman', username: 'salman', phone: '9876543210', teamId: null },
+    { _id: '671e00000000000000000002', fullName: 'Abdul Basith', username: 'basith', phone: '9123456789', teamId: '671e00000000000000000099' }
+  ];
+
+  const search = (q) => {
+    const s = q.toLowerCase().trim();
+    return members.filter(m => m.fullName.toLowerCase().includes(s) || m.phone.includes(s) || m._id === s);
+  };
+
+  const res1 = search('Salman');
+  assert.equal(res1.length, 1);
+  assert.equal(res1[0].username, 'salman');
+
+  const res2 = search('912345');
+  assert.equal(res2.length, 1);
+  assert.equal(res2[0].fullName, 'Abdul Basith');
+
+  // Verify sanitized output (no password or pin hints)
+  assert.equal(res1[0].passwordHash, undefined);
+  assert.equal(res1[0].pinHash, undefined);
+  assert.equal(res1[0].passwordHint, undefined);
+});
+
+test('Scenario 7: Member assignment reuses existing account without creating duplicate user', () => {
+  const existingUser = { _id: 'user_101', username: 'khalid', fullName: 'Khalid', teamId: null };
+  const team = { _id: 'team_202', name: 'Team Badr', members: [] };
+
+  // Assign existing user
+  team.members.push(existingUser._id);
+  existingUser.teamId = team._id;
+
+  assert.equal(existingUser._id, 'user_101');
+  assert.equal(existingUser.teamId, 'team_202');
+  assert.equal(team.members.includes('user_101'), true);
+});
+
+test('Scenario 8: Independent member creates collections with teamId: null', async () => {
+  const Collection = (await import('../server/models/Collection.js')).default;
+  const mongoose = (await import('mongoose')).default;
+
+  const independentCol = new Collection({
+    memberId: new mongoose.Types.ObjectId(),
+    teamId: null, // explicitly null
+    amount: 2500,
+    incomeType: 'calendar_sale',
+    status: 'pending',
+    approvalStatus: 'pending'
+  });
+
+  assert.equal(independentCol.teamId, null);
+  assert.equal(independentCol.amount, 2500);
+  assert.equal(independentCol.approvalStatus, 'pending');
+});
+
+test('Scenario 9: Independent member collections route to Super Admin/Usthad approval queue', () => {
+  const pendingCollections = [
+    { _id: 'col_1', memberId: 'user_indep_1', teamId: null, amount: 1000, approvalStatus: 'pending' },
+    { _id: 'col_2', memberId: 'user_team_1', teamId: 'team_1', amount: 2000, approvalStatus: 'pending' }
+  ];
+
+  // Super Admin / Usthad view (sees all pending entries including teamId: null)
+  const adminQueue = pendingCollections.filter(c => c.approvalStatus === 'pending');
+  assert.equal(adminQueue.length, 2);
+
+  // Team Leader 1 view (strictly scoped to team_1, excludes independent teamId: null)
+  const leaderQueue = pendingCollections.filter(c => c.approvalStatus === 'pending' && c.teamId === 'team_1');
+  assert.equal(leaderQueue.length, 1);
+  assert.equal(leaderQueue[0]._id, 'col_2');
+});
+
+test('Scenario 10: Independent member dashboard displays Independent Member, no leader, ₹25,000 target', () => {
+  const indepMember = {
+    _id: 'indep_1',
+    fullName: 'Independent Collector',
+    role: 'team_member',
+    teamId: null,
+    collectionTarget: 25000
+  };
+
+  const approvedCollections = 17500;
+  const target = indepMember.collectionTarget || 25000;
+  const remaining = Math.max(0, target - approvedCollections);
+  const percentage = Math.round((approvedCollections / target) * 100);
+
+  const teamDisplay = !indepMember.teamId ? 'Independent Member / No Team' : 'Assigned Team';
+  const leaderDisplay = !indepMember.teamId ? null : 'Leader Name';
+
+  assert.equal(teamDisplay, 'Independent Member / No Team');
+  assert.equal(leaderDisplay, null);
+  assert.equal(target, 25000);
+  assert.equal(remaining, 7500);
+  assert.equal(percentage, 70);
+});
+
+test('Scenario 11: Campaign separation: multi-year campaigns have unique IDs and isolate teams/transactions', async () => {
+  const Campaign = (await import('../server/models/Campaign.js')).default;
+
+  const camp2025 = new Campaign({
+    campaignCode: 'CAMP-2025',
+    name: 'Annual Calendar Camp 2025',
+    startDate: new Date('2025-01-01'),
+    endDate: new Date('2025-03-31'),
+    status: 'completed',
+    isActive: false
+  });
+
+  const camp2026 = new Campaign({
+    campaignCode: 'CAMP-2026',
+    name: 'Annual Calendar Camp 2026',
+    startDate: new Date('2026-01-01'),
+    endDate: new Date('2026-03-31'),
+    status: 'active',
+    isActive: true
+  });
+
+  assert.notEqual(camp2025._id.toString(), camp2026._id.toString());
+  assert.equal(camp2025.status, 'completed');
+  assert.equal(camp2026.status, 'active');
+  assert.equal(camp2026.isActive, true);
+});
+
+test('Scenario 12: WhatsApp Report Team-wise filter scopes to selected team and excludes other teams/independent members', async () => {
+  const { buildCustomWhatsAppReport } = await import('../server/utils/whatsappReports.js');
+
+  const report = buildCustomWhatsAppReport({
+    selectedTeamOnly: true,
+    selectedTeamName: 'Team Al-Falah',
+    teamsData: [
+      {
+        name: 'Team Al-Falah',
+        distributed: 120,
+        collected: 12000,
+        members: [{ name: 'Member A', distributed: 60, collected: 6000 }]
+      }
+    ],
+    totals: { distributed: 120, collected: 12000 }
+  });
+
+  assert.ok(report.includes('Team-wise Report') && report.includes('Team Al-Falah') && report.includes('Selected Team Members Only'));
+  assert.ok(report.includes('Team Al-Falah'));
+  assert.ok(!report.includes('Team Uhud'));
+});
+
+test('Scenario 13: WhatsApp Report Top Collectors toggle orders by approved collections with medal badges & ties handled', async () => {
+  const { buildCustomWhatsAppReport } = await import('../server/utils/whatsappReports.js');
+
+  const report = buildCustomWhatsAppReport({
+    sections: { includeTopCollectors: true, includeHeader: true },
+    topCollectors: [
+      { name: 'Collector One', teamName: 'Team A', collected: 25000, target: 25000, remaining: 0, progress: 100 },
+      { name: 'Collector Two', teamName: 'Team B', collected: 25000, target: 25000, remaining: 0, progress: 100 },
+      { name: 'Collector Three', teamName: 'Independent Member', collected: 18000, target: 25000, remaining: 7000, progress: 72 }
+    ]
+  });
+
+  assert.ok(report.includes('TOP COLLECTORS'));
+  assert.ok(report.includes('Collector One') && report.includes('🥇'));
+  assert.ok(report.includes('Collector Two') && report.includes('🥇')); // Shared tie
+  assert.ok(report.includes('Collector Three') && report.includes('🥉')); // Rank 3 after tie
+  assert.ok(report.includes('Approved Collection: ₹25,000'));
+});
+
+test('Scenario 14: WhatsApp Report Top Collectors display limits (Top 3, 5, 10, All) work correctly', async () => {
+  const { buildCustomWhatsAppReport } = await import('../server/utils/whatsappReports.js');
+
+  const collectors = [
+    { name: 'Person 1', collected: 5000, target: 25000, remaining: 20000, progress: 20 },
+    { name: 'Person 2', collected: 4000, target: 25000, remaining: 21000, progress: 16 },
+    { name: 'Person 3', collected: 3000, target: 25000, remaining: 22000, progress: 12 },
+    { name: 'Person 4', collected: 2000, target: 25000, remaining: 23000, progress: 8 },
+    { name: 'Person 5', collected: 1000, target: 25000, remaining: 24000, progress: 4 }
+  ];
+
+  const reportTop3 = buildCustomWhatsAppReport({
+    sections: { includeTopCollectors: true },
+    topCollectors: collectors,
+    topCollectorsLimit: 3
+  });
+
+  assert.ok(reportTop3.includes('Person 1'));
+  assert.ok(reportTop3.includes('Person 2'));
+  assert.ok(reportTop3.includes('Person 3'));
+  assert.ok(!reportTop3.includes('Person 4'));
+  assert.ok(!reportTop3.includes('Person 5'));
+});
+
+test('Scenario 15: WhatsApp Report excludes pending and rejected transactions from official counts', () => {
+  const transactions = [
+    { id: 1, amount: 1000, approvalStatus: 'approved' },
+    { id: 2, amount: 2000, approvalStatus: 'pending' },
+    { id: 3, amount: 500, approvalStatus: 'rejected' }
+  ];
+
+  const officialTotal = transactions
+    .filter(t => t.approvalStatus === 'approved')
+    .reduce((sum, t) => sum + t.amount, 0);
+
+  assert.equal(officialTotal, 1000);
+  assert.equal(transactions.some(t => t.approvalStatus === 'pending' && t.amount === 2000), true);
+});

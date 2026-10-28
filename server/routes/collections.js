@@ -5,6 +5,7 @@ import { authMiddleware } from '../middleware/auth.js';
 import { requireRole } from '../middleware/rbac.js';
 import { isValidObjectId } from '../utils/validation.js';
 import { logAudit } from '../utils/audit.js';
+import { getActiveCampaign } from '../utils/campaignHelper.js';
 
 const router = express.Router();
 
@@ -16,6 +17,11 @@ router.get('/', async (req, res) => {
     const { teamId, memberId, areaId, status, dateFrom, dateTo, page = 1, limit = 50 } = req.query;
     const query = {};
 
+    const { campaignId, independent, noTeam } = req.query;
+    if (campaignId && isValidObjectId(campaignId)) {
+      query.campaignId = campaignId;
+    }
+
     if (req.user.role === 'team_member') {
       query.memberId = req.user._id;
     } else if (req.user.role === 'team_leader') {
@@ -23,7 +29,11 @@ router.get('/', async (req, res) => {
       query.teamId = userTeamId;
       if (memberId && isValidObjectId(memberId)) query.memberId = memberId;
     } else {
-      if (teamId && isValidObjectId(teamId)) query.teamId = teamId;
+      if (teamId === 'independent' || teamId === 'none' || independent === 'true' || noTeam === 'true') {
+        query.teamId = null;
+      } else if (teamId && isValidObjectId(teamId)) {
+        query.teamId = teamId;
+      }
       if (memberId && isValidObjectId(memberId)) query.memberId = memberId;
     }
 
@@ -107,12 +117,9 @@ router.post('/', async (req, res) => {
       }
     }
 
-    if (!teamId) {
-      return res.status(400).json({ success: false, error: 'User is not assigned to a team.' });
-    }
-
+    // Independent members have teamId: null
     // Guard: If team leader has enabled overall collection mode, regular team members cannot enter collections
-    if (req.user.role === 'team_member') {
+    if (req.user.role === 'team_member' && teamId) {
       const Team = (await import('../models/Team.js')).default;
       const teamDoc = await Team.findById(teamId);
       if (teamDoc && teamDoc.leaderEntersOverallCollection) {
@@ -123,6 +130,9 @@ router.post('/', async (req, res) => {
       }
     }
 
+    const activeCamp = await getActiveCampaign();
+    const campaignId = activeCamp ? activeCamp._id : null;
+
     const cleanIncomeType = ['calendar_sale', 'donation', 'other_income'].includes(incomeType)
       ? incomeType
       : 'calendar_sale';
@@ -132,7 +142,8 @@ router.post('/', async (req, res) => {
 
     const collection = await Collection.create({
       memberId,
-      teamId,
+      teamId: teamId || null,
+      campaignId,
       areaId: areaId && isValidObjectId(areaId) ? areaId : null,
       amount: amt,
       incomeType: cleanIncomeType,
@@ -204,10 +215,10 @@ router.put('/:id/approve', async (req, res) => {
       return res.status(403).json({ success: false, error: 'Team members are not authorized to approve entries.' });
     }
 
-    // Team leaders can only approve their own team's entries
+    // Team leaders can only approve their own team's entries; Super Admin and Usthad approve independent collections
     if (req.user.role === 'team_leader') {
       const userTeamId = req.user.teamId ? (req.user.teamId._id || req.user.teamId).toString() : null;
-      if (!userTeamId || userTeamId !== col.teamId.toString()) {
+      if (!userTeamId || !col.teamId || userTeamId !== col.teamId.toString()) {
         return res.status(403).json({ success: false, error: 'You are only authorized to review and approve entries for your own team.' });
       }
     }
@@ -274,7 +285,7 @@ router.put('/:id/reject', async (req, res) => {
 
     if (req.user.role === 'team_leader') {
       const userTeamId = req.user.teamId ? (req.user.teamId._id || req.user.teamId).toString() : null;
-      if (!userTeamId || userTeamId !== col.teamId.toString()) {
+      if (!userTeamId || !col.teamId || userTeamId !== col.teamId.toString()) {
         return res.status(403).json({ success: false, error: 'You are only authorized to review and reject entries for your own team.' });
       }
     }

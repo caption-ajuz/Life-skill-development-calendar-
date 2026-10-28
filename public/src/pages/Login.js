@@ -56,7 +56,7 @@ export default function Login() {
       if (window.showToast) window.showToast('Welcome back to Life Skill Course', 'success');
       window.location.hash = '#/';
     } catch (err) {
-      setError(err.message || 'Invalid 4-digit PIN. Try 1111 for Super Admin.');
+      setError(err.message || 'Invalid 4-digit PIN. Try 7863 for Super Admin.');
       setIsShaking(true);
       if (navigator.vibrate) navigator.vibrate([40, 60, 40]);
       setTimeout(() => {
@@ -372,7 +372,7 @@ export default function Login() {
             class="lsc-touch-btn"
             onClick=${() => {
               if (window.showToast) {
-                window.showToast('Quick PINs: 1111 (Admin) · 2222 (Usthad) · 3333 (Leader) · 4444 (Member)', 'info', 4000);
+                window.showToast('Quick PINs: 7863 (Admin) · 2222 (Usthad) · 3333 (Leader) · 4444 (Member)', 'info', 4000);
               }
             }}
             style="
@@ -998,122 +998,6 @@ export default function Login() {
         </div>
       `}
 
-        <!-- 1-Tap Sandbox for Instant Demo / Role Switching (Clean White Card with Bright Badges) -->
-        <div style="
-          background: #ffffff;
-          border: 1.5px solid #e2e8f0;
-          box-shadow: 0 4px 14px rgba(0, 0, 0, 0.04);
-          border-radius: 14px;
-          padding: 12px;
-        ">
-          <div style="
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 8px;
-          ">
-            <span style="font-size: 11px; font-weight: 800; color: #0284c7; letter-spacing: 0.5px; text-transform: uppercase;">
-              Quick Demo Sandbox (1-Tap Enter)
-            </span>
-            <span style="font-size: 11px; color: #64748b; font-weight: 500;">
-              Tap or type PIN
-            </span>
-          </div>
-
-          <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px;">
-            <button
-              type="button"
-              class="lsc-touch-btn"
-              onClick=${() => handleSandboxEnter('1111')}
-              disabled=${loading}
-              style="
-                padding: 8px 10px;
-                background: #f8fafc;
-                border: 1.5px solid #e2e8f0;
-                border-radius: 10px;
-                color: #0f172a;
-                font-size: 12px;
-                font-weight: 700;
-                cursor: pointer;
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-              "
-            >
-              <span>Super Admin</span>
-              <span style="background: #e0f2fe; color: #0284c7; padding: 2px 7px; border-radius: 6px; font-size: 11px; font-weight: 800; font-family: monospace;">1111</span>
-            </button>
-
-            <button
-              type="button"
-              class="lsc-touch-btn"
-              onClick=${() => handleSandboxEnter('2222')}
-              disabled=${loading}
-              style="
-                padding: 8px 10px;
-                background: #f8fafc;
-                border: 1.5px solid #e2e8f0;
-                border-radius: 10px;
-                color: #0f172a;
-                font-size: 12px;
-                font-weight: 700;
-                cursor: pointer;
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-              "
-            >
-              <span>Usthad</span>
-              <span style="background: #e0f2fe; color: #0284c7; padding: 2px 7px; border-radius: 6px; font-size: 11px; font-weight: 800; font-family: monospace;">2222</span>
-            </button>
-
-            <button
-              type="button"
-              class="lsc-touch-btn"
-              onClick=${() => handleSandboxEnter('3333')}
-              disabled=${loading}
-              style="
-                padding: 8px 10px;
-                background: #f8fafc;
-                border: 1.5px solid #e2e8f0;
-                border-radius: 10px;
-                color: #0f172a;
-                font-size: 12px;
-                font-weight: 700;
-                cursor: pointer;
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-              "
-            >
-              <span>Team Leader</span>
-              <span style="background: #e0f2fe; color: #0284c7; padding: 2px 7px; border-radius: 6px; font-size: 11px; font-weight: 800; font-family: monospace;">3333</span>
-            </button>
-
-            <button
-              type="button"
-              class="lsc-touch-btn"
-              onClick=${() => handleSandboxEnter('4444')}
-              disabled=${loading}
-              style="
-                padding: 8px 10px;
-                background: #f8fafc;
-                border: 1.5px solid #e2e8f0;
-                border-radius: 10px;
-                color: #0f172a;
-                font-size: 12px;
-                font-weight: 700;
-                cursor: pointer;
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-              "
-            >
-              <span>Member</span>
-              <span style="background: #e0f2fe; color: #0284c7; padding: 2px 7px; border-radius: 6px; font-size: 11px; font-weight: 800; font-family: monospace;">4444</span>
-            </button>
-          </div>
-        </div>
       </div>
     </div>
   `;

@@ -14,10 +14,16 @@ const moneyTransferSchema = new mongoose.Schema(
       trim: true,
       maxlength: 200
     },
+    campaignId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Campaign',
+      default: null,
+      index: true
+    },
     teamId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Team',
-      required: true,
+      default: null,
       index: true
     },
     amount: {

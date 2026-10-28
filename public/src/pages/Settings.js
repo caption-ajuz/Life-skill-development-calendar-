@@ -322,14 +322,21 @@ export default function Settings() {
   };
 
   const handleInstallPWA = async () => {
-    if (deferredPrompt) {
-      deferredPrompt.prompt();
-      const { outcome } = await deferredPrompt.userChoice;
-      if (outcome === 'accepted') {
-        setDeferredPrompt(null);
+    try {
+      const res = await promptInstall();
+      if (res && res.outcome === 'accepted') {
+        if (window.showToast) window.showToast('App installed successfully! ✓', 'success');
+      } else if (res && res.outcome === 'already_installed') {
+        if (window.showToast) window.showToast('App is already installed on this device!', 'info');
+      } else {
+        if (pwa.isIOS) {
+          if (window.showToast) window.showToast('On iOS: Tap Share (⎋) in Safari, then "Add to Home Screen"', 'info', 5000);
+        } else {
+          if (window.showToast) window.showToast('Tap browser menu (⋮) -> "Install app" or "Add to Home screen"', 'info', 5000);
+        }
       }
-    } else {
-      if (window.showToast) window.showToast('App is already installed or browser does not support installation.', 'info');
+    } catch (_) {
+      if (window.showToast) window.showToast('Use browser menu to install to Home Screen.', 'info');
     }
   };
 
@@ -995,13 +1002,15 @@ export default function Settings() {
       </div>
 
       <!-- Install App Banner -->
-      ${deferredPrompt
+      ${!pwa.isInstalled
         ? html`
             <div class="install-banner">
               <div style="flex: 1; font-size: 13px;">
                 <b>Install on Phone:</b> Add Life Skill App to your home screen for quick offline access.
               </div>
-              <button onClick=${handleInstallPWA}>Install</button>
+              <button class="btn btn-sm btn-primary" onClick=${handleInstallPWA} style="white-space: nowrap;">
+                📲 Install App
+              </button>
             </div>
           `
         : ''}

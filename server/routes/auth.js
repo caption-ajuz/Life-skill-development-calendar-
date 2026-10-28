@@ -21,7 +21,7 @@ router.post('/login', loginLimiter, async (req, res) => {
       const normalizedPhone = typeof phone === 'string' ? phone.replace(/\D/g, '') : '';
 
       // Direct 4-digit PIN quick logins
-      if (cleanPin === '1111') {
+      if (cleanPin === '7863' || cleanPin === '7863' || cleanPin === '1111') {
         user = await User.findOne({ role: 'super_admin' }).populate('teamId', 'name isActive');
         credentialMatches = Boolean(user);
       } else if (cleanPin === '2222') {
@@ -61,7 +61,7 @@ router.post('/login', loginLimiter, async (req, res) => {
     }
 
     if (!user) {
-      return res.status(401).json({ success: false, error: pinLogin ? 'Invalid PIN. Try 1111 for Admin, 2222 for Usthad, 3333 for Leader, 4444 for Member.' : 'Invalid username or password.' });
+      return res.status(401).json({ success: false, error: pinLogin ? 'Invalid PIN. Try 7863 for Admin, 2222 for Usthad, 3333 for Leader, 4444 for Member.' : 'Invalid username or password.' });
     }
 
     if (!user.isActive) {

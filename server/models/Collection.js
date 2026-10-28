@@ -11,7 +11,13 @@ const collectionSchema = new mongoose.Schema(
     teamId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Team',
-      required: true,
+      default: null,
+      index: true
+    },
+    campaignId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Campaign',
+      default: null,
       index: true
     },
     areaId: {
