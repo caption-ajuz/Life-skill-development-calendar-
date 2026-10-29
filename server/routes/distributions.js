@@ -487,4 +487,116 @@ router.put('/:id/correct', requireRole('super_admin', 'usthad', 'team_leader'), 
   }
 });
 
+
+// PUT /api/distributions/:id - Edit distribution entry
+router.put('/:id', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { quantity, areaId, date, notes, recipientName, recipientPhone, status } = req.body;
+
+    if (!isValidObjectId(id)) {
+      return res.status(400).json({ success: false, error: 'Invalid distribution ID.' });
+    }
+
+    const dist = await Distribution.findById(id);
+    if (!dist) {
+      return res.status(404).json({ success: false, error: 'Distribution record not found.' });
+    }
+
+    const isSuperOrUsthad = ['super_admin', 'usthad'].includes(req.user.role);
+    const isTeamLeader = req.user.role === 'team_leader';
+    const isOwner = dist.memberId && dist.memberId.toString() === req.user._id.toString();
+
+    if (!isSuperOrUsthad && !isOwner) {
+      if (isTeamLeader) {
+        const leaderTeamId = req.user.teamId ? (req.user.teamId._id || req.user.teamId).toString() : null;
+        const distTeamId = dist.teamId ? (dist.teamId._id || dist.teamId).toString() : null;
+        if (!leaderTeamId || leaderTeamId !== distTeamId) {
+          return res.status(403).json({ success: false, error: 'You may only edit distributions within your team.' });
+        }
+      } else {
+        return res.status(403).json({ success: false, error: 'Permission denied to edit this distribution.' });
+      }
+    }
+
+    const oldValues = dist.toObject();
+
+    if (quantity !== undefined) {
+      const q = parseInt(quantity, 10);
+      if (isNaN(q) || q < 0) return res.status(400).json({ success: false, error: 'Quantity must be non-negative.' });
+      dist.quantity = q;
+    }
+    if (areaId !== undefined) dist.areaId = isValidObjectId(areaId) ? areaId : null;
+    if (date !== undefined) dist.date = new Date(date);
+    if (notes !== undefined) dist.notes = notes.trim();
+    if (recipientName !== undefined) dist.recipientName = recipientName.trim();
+    if (recipientPhone !== undefined) dist.recipientPhone = recipientPhone.trim();
+    if (status !== undefined && isSuperOrUsthad) dist.status = status;
+
+    await dist.save();
+
+    await logAudit({
+      entityType: 'distribution',
+      entityId: dist._id,
+      action: 'edit',
+      oldValues: { quantity: oldValues.quantity, areaId: oldValues.areaId, date: oldValues.date },
+      newValues: { quantity: dist.quantity, areaId: dist.areaId, date: dist.date },
+      performedBy: req.user._id,
+      ipAddress: req.ip
+    });
+
+    return res.json({ success: true, data: dist, message: 'Distribution updated successfully.' });
+  } catch (err) {
+    console.error('Edit distribution error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to update distribution.' });
+  }
+});
+
+// DELETE /api/distributions/:id - Delete distribution entry
+router.delete('/:id', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!isValidObjectId(id)) {
+      return res.status(400).json({ success: false, error: 'Invalid distribution ID.' });
+    }
+
+    const dist = await Distribution.findById(id);
+    if (!dist) {
+      return res.status(404).json({ success: false, error: 'Distribution record not found.' });
+    }
+
+    const isSuperOrUsthad = ['super_admin', 'usthad'].includes(req.user.role);
+    const isTeamLeader = req.user.role === 'team_leader';
+    const isOwner = dist.memberId && dist.memberId.toString() === req.user._id.toString();
+
+    if (!isSuperOrUsthad && !isOwner) {
+      if (isTeamLeader) {
+        const leaderTeamId = req.user.teamId ? (req.user.teamId._id || req.user.teamId).toString() : null;
+        const distTeamId = dist.teamId ? (dist.teamId._id || dist.teamId).toString() : null;
+        if (!leaderTeamId || leaderTeamId !== distTeamId) {
+          return res.status(403).json({ success: false, error: 'You may only delete distributions within your team.' });
+        }
+      } else {
+        return res.status(403).json({ success: false, error: 'Permission denied to delete this distribution.' });
+      }
+    }
+
+    await Distribution.findByIdAndDelete(id);
+
+    await logAudit({
+      entityType: 'distribution',
+      entityId: id,
+      action: 'delete',
+      oldValues: { quantity: dist.quantity, memberId: dist.memberId, date: dist.date },
+      performedBy: req.user._id,
+      ipAddress: req.ip
+    });
+
+    return res.json({ success: true, message: 'Distribution deleted successfully.' });
+  } catch (err) {
+    console.error('Delete distribution error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to delete distribution.' });
+  }
+});
+
 export default router;

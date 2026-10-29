@@ -255,9 +255,14 @@ router.get('/team/:teamId', async (req, res) => {
     }
 
     // Individual Member Progress breakdown
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+
     const memberProgress = await Promise.all(
       members.map(async (m) => {
-        const [d, c, a] = await Promise.all([
+        const [d, c, a, dToday, cToday] = await Promise.all([
           Distribution.aggregate([
             { $match: { memberId: m._id, status: { $in: ['active', 'approved'] }, approvalStatus: { $ne: 'rejected' } } },
             { $group: { _id: null, total: { $sum: '$quantity' } } }
@@ -269,12 +274,21 @@ router.get('/team/:teamId', async (req, res) => {
           StockAllocation.aggregate([
             { $match: { memberId: m._id } },
             { $group: { _id: null, total: { $sum: '$quantity' } } }
+          ]),
+          Distribution.aggregate([
+            { $match: { memberId: m._id, date: { $gte: todayStart, $lte: todayEnd }, status: { $in: ['active', 'approved'] }, approvalStatus: { $ne: 'rejected' } } },
+            { $group: { _id: null, total: { $sum: '$quantity' } } }
+          ]),
+          Collection.aggregate([
+            { $match: { memberId: m._id, date: { $gte: todayStart, $lte: todayEnd }, status: { $in: ['active', 'approved'] }, approvalStatus: { $ne: 'rejected' } } },
+            { $group: { _id: null, total: { $sum: '$amount' } } }
           ])
         ]);
-
         const allocated = a[0] ? a[0].total : 0;
         const distributed = d[0] ? d[0].total : 0;
         const collected = c[0] ? c[0].total : 0;
+        const todayDist = dToday[0] ? dToday[0].total : 0;
+        const todayCol = cToday[0] ? cToday[0].total : 0;
         const target = m.collectionTarget !== undefined && m.collectionTarget !== null ? m.collectionTarget : 25000;
         const remainingToTarget = Math.max(0, target - collected);
         const targetPercentage = target > 0 ? Math.min(100, Math.round((collected / target) * 100)) : 0;
@@ -290,6 +304,8 @@ router.get('/team/:teamId', async (req, res) => {
           distributed,
           remainingStock: Math.max(0, allocated - distributed),
           collected,
+          todayCollected: todayCol,
+          todayDistributed: todayDist,
           target,
           remainingToTarget,
           targetPercentage

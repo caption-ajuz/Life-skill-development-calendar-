@@ -243,4 +243,110 @@ router.put('/:id/dispute', requireRole('super_admin', 'usthad', 'team_leader'), 
   }
 });
 
+
+// PUT /api/transfers/:id - Edit transfer/handover entry
+router.put('/:id', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { amount, toDescription, transferDate, notes } = req.body;
+
+    if (!isValidObjectId(id)) {
+      return res.status(400).json({ success: false, error: 'Invalid transfer ID.' });
+    }
+
+    const transfer = await MoneyTransfer.findById(id);
+    if (!transfer) {
+      return res.status(404).json({ success: false, error: 'Transfer record not found.' });
+    }
+
+    const isSuperOrUsthad = ['super_admin', 'usthad'].includes(req.user.role);
+    const isTeamLeader = req.user.role === 'team_leader';
+    const isOwner = transfer.fromUserId && transfer.fromUserId.toString() === req.user._id.toString();
+
+    if (!isSuperOrUsthad && !isOwner) {
+      if (isTeamLeader) {
+        const leaderTeamId = req.user.teamId ? (req.user.teamId._id || req.user.teamId).toString() : null;
+        const trTeamId = transfer.teamId ? (transfer.teamId._id || transfer.teamId).toString() : null;
+        if (!leaderTeamId || leaderTeamId !== trTeamId) {
+          return res.status(403).json({ success: false, error: 'You may only edit transfers within your team.' });
+        }
+      } else {
+        return res.status(403).json({ success: false, error: 'Permission denied to edit this transfer.' });
+      }
+    }
+
+    if (amount !== undefined) {
+      const amt = parseFloat(amount);
+      if (isNaN(amt) || amt <= 0) return res.status(400).json({ success: false, error: 'Amount must be greater than zero.' });
+      transfer.amount = amt;
+    }
+    if (toDescription !== undefined) transfer.toDescription = toDescription.trim();
+    if (transferDate !== undefined) transfer.transferDate = new Date(transferDate);
+    if (notes !== undefined) transfer.notes = notes.trim();
+
+    await transfer.save();
+
+    await logAudit({
+      entityType: 'money_transfer',
+      entityId: transfer._id,
+      action: 'edit',
+      newValues: { amount: transfer.amount, toDescription: transfer.toDescription, transferDate: transfer.transferDate },
+      performedBy: req.user._id,
+      ipAddress: req.ip
+    });
+
+    return res.json({ success: true, data: transfer, message: 'Transfer updated successfully.' });
+  } catch (err) {
+    console.error('Edit transfer error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to update transfer.' });
+  }
+});
+
+// DELETE /api/transfers/:id - Delete transfer/handover entry
+router.delete('/:id', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!isValidObjectId(id)) {
+      return res.status(400).json({ success: false, error: 'Invalid transfer ID.' });
+    }
+
+    const transfer = await MoneyTransfer.findById(id);
+    if (!transfer) {
+      return res.status(404).json({ success: false, error: 'Transfer record not found.' });
+    }
+
+    const isSuperOrUsthad = ['super_admin', 'usthad'].includes(req.user.role);
+    const isTeamLeader = req.user.role === 'team_leader';
+    const isOwner = transfer.fromUserId && transfer.fromUserId.toString() === req.user._id.toString();
+
+    if (!isSuperOrUsthad && !isOwner) {
+      if (isTeamLeader) {
+        const leaderTeamId = req.user.teamId ? (req.user.teamId._id || req.user.teamId).toString() : null;
+        const trTeamId = transfer.teamId ? (transfer.teamId._id || transfer.teamId).toString() : null;
+        if (!leaderTeamId || leaderTeamId !== trTeamId) {
+          return res.status(403).json({ success: false, error: 'You may only delete transfers within your team.' });
+        }
+      } else {
+        return res.status(403).json({ success: false, error: 'Permission denied to delete this transfer.' });
+      }
+    }
+
+    await MoneyTransfer.findByIdAndDelete(id);
+
+    await logAudit({
+      entityType: 'money_transfer',
+      entityId: id,
+      action: 'delete',
+      oldValues: { amount: transfer.amount, toDescription: transfer.toDescription },
+      performedBy: req.user._id,
+      ipAddress: req.ip
+    });
+
+    return res.json({ success: true, message: 'Transfer deleted successfully.' });
+  } catch (err) {
+    console.error('Delete transfer error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to delete transfer.' });
+  }
+});
+
 export default router;

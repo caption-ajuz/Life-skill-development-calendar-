@@ -32,6 +32,7 @@ export default function Reports() {
   const [includeTopPerformers, setIncludeTopPerformers] = useState(true);
   const [includeBreakdown, setIncludeBreakdown] = useState(true);
   const [includeCollectionRanking, setIncludeCollectionRanking] = useState(false);
+  const [includeTeamSubmissionStatus, setIncludeTeamSubmissionStatus] = useState(true);
   const [includeTargetProgress, setIncludeTargetProgress] = useState(false);
   const [selectedTeamOnly, setSelectedTeamOnly] = useState(false);
   const [includeTopCollectors, setIncludeTopCollectors] = useState(false);
@@ -100,6 +101,7 @@ export default function Reports() {
       setIncludeProgressBar(true);
       setIncludeTopPerformers(false);
       setIncludeBreakdown(false);
+      setIncludeTeamSubmissionStatus(true);
       setIncludeTargetProgress(false);
       setIncludeHandoverStatus(isSuperOrUsthad || isTeamLeader);
       setIncludeZeroActivity(false);
@@ -111,6 +113,8 @@ export default function Reports() {
       setIncludeProgressBar(true);
       setIncludeTopPerformers(true);
       setIncludeBreakdown(true);
+      setIncludeCollectionRanking(true);
+      setIncludeTeamSubmissionStatus(true);
       setIncludeTargetProgress(true);
       setIncludeHandoverStatus(isSuperOrUsthad || isTeamLeader);
       setIncludeZeroActivity(true);
@@ -122,6 +126,7 @@ export default function Reports() {
       setIncludeProgressBar(false);
       setIncludeTopPerformers(false);
       setIncludeBreakdown(true);
+      setIncludeTeamSubmissionStatus(false);
       setIncludeTargetProgress(false);
       setIncludeHandoverStatus(false);
       setIncludeZeroActivity(false);
@@ -790,6 +795,8 @@ export default function Reports() {
                   onChange=${(e) => setIncludeHeader(e.target.checked)}
                 />
                 <span>Header & Logo</span>
+              </label>
+
               <!-- Daily Team Submission Status (Malayalam) -->
               <label style="display: flex; align-items: center; gap: 7px; padding: 6px 8px; border: 1px solid #10b981; border-radius: 6px; cursor: pointer; background: #ecfdf5; grid-column: span 2;">
                 <input
@@ -798,8 +805,6 @@ export default function Reports() {
                   onChange=${(e) => setIncludeTeamSubmissionStatus(e.target.checked)}
                 />
                 <span style="font-weight: 700; color: #065f46;">📋 ഇന്നത്തെ കണക്ക് ലഭിച്ചത് (Team Submission Status)</span>
-              </label>
-
               </label>
 
               <label style="display: flex; align-items: center; gap: 7px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; background: var(--bg-card);">

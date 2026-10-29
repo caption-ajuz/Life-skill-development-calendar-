@@ -512,4 +512,117 @@ router.put('/:id/correct', requireRole('super_admin', 'usthad', 'team_leader'), 
   }
 });
 
+
+// PUT /api/collections/:id - Edit collection entry
+// Super admin / Usthad: any collection
+// Team Leader: collection in their team or self
+// Team Member: their own collection
+router.put('/:id', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { amount, areaId, date, notes, status } = req.body;
+
+    if (!isValidObjectId(id)) {
+      return res.status(400).json({ success: false, error: 'Invalid collection ID.' });
+    }
+
+    const col = await Collection.findById(id);
+    if (!col) {
+      return res.status(404).json({ success: false, error: 'Collection record not found.' });
+    }
+
+    const isSuperOrUsthad = ['super_admin', 'usthad'].includes(req.user.role);
+    const isTeamLeader = req.user.role === 'team_leader';
+    const isOwner = col.memberId && col.memberId.toString() === req.user._id.toString();
+
+    if (!isSuperOrUsthad && !isOwner) {
+      if (isTeamLeader) {
+        const leaderTeamId = req.user.teamId ? (req.user.teamId._id || req.user.teamId).toString() : null;
+        const colTeamId = col.teamId ? (col.teamId._id || col.teamId).toString() : null;
+        if (!leaderTeamId || leaderTeamId !== colTeamId) {
+          return res.status(403).json({ success: false, error: 'You may only edit collections within your team.' });
+        }
+      } else {
+        return res.status(403).json({ success: false, error: 'Permission denied to edit this collection.' });
+      }
+    }
+
+    const oldValues = col.toObject();
+
+    if (amount !== undefined) {
+      const amt = parseFloat(amount);
+      if (isNaN(amt) || amt < 0) return res.status(400).json({ success: false, error: 'Amount must be non-negative.' });
+      col.amount = amt;
+    }
+    if (areaId !== undefined) col.areaId = isValidObjectId(areaId) ? areaId : null;
+    if (date !== undefined) col.date = new Date(date);
+    if (notes !== undefined) col.notes = notes.trim();
+    if (status !== undefined && isSuperOrUsthad) col.status = status;
+
+    await col.save();
+
+    await logAudit({
+      entityType: 'collection',
+      entityId: col._id,
+      action: 'edit',
+      oldValues: { amount: oldValues.amount, areaId: oldValues.areaId, date: oldValues.date, notes: oldValues.notes },
+      newValues: { amount: col.amount, areaId: col.areaId, date: col.date, notes: col.notes },
+      performedBy: req.user._id,
+      ipAddress: req.ip
+    });
+
+    return res.json({ success: true, data: col, message: 'Collection updated successfully.' });
+  } catch (err) {
+    console.error('Edit collection error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to update collection.' });
+  }
+});
+
+// DELETE /api/collections/:id - Delete collection entry
+router.delete('/:id', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!isValidObjectId(id)) {
+      return res.status(400).json({ success: false, error: 'Invalid collection ID.' });
+    }
+
+    const col = await Collection.findById(id);
+    if (!col) {
+      return res.status(404).json({ success: false, error: 'Collection record not found.' });
+    }
+
+    const isSuperOrUsthad = ['super_admin', 'usthad'].includes(req.user.role);
+    const isTeamLeader = req.user.role === 'team_leader';
+    const isOwner = col.memberId && col.memberId.toString() === req.user._id.toString();
+
+    if (!isSuperOrUsthad && !isOwner) {
+      if (isTeamLeader) {
+        const leaderTeamId = req.user.teamId ? (req.user.teamId._id || req.user.teamId).toString() : null;
+        const colTeamId = col.teamId ? (col.teamId._id || col.teamId).toString() : null;
+        if (!leaderTeamId || leaderTeamId !== colTeamId) {
+          return res.status(403).json({ success: false, error: 'You may only delete collections within your team.' });
+        }
+      } else {
+        return res.status(403).json({ success: false, error: 'Permission denied to delete this collection.' });
+      }
+    }
+
+    await Collection.findByIdAndDelete(id);
+
+    await logAudit({
+      entityType: 'collection',
+      entityId: id,
+      action: 'delete',
+      oldValues: { amount: col.amount, memberId: col.memberId, date: col.date },
+      performedBy: req.user._id,
+      ipAddress: req.ip
+    });
+
+    return res.json({ success: true, message: 'Collection deleted successfully.' });
+  } catch (err) {
+    console.error('Delete collection error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to delete collection.' });
+  }
+});
+
 export default router;

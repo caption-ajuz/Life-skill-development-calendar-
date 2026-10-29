@@ -16,6 +16,90 @@ export default function Dashboard() {
   const [cfgInvest, setCfgInvest] = useState('');
   const [cfgPrint, setCfgPrint] = useState('');
   const [savingCfg, setSavingCfg] = useState(false);
+  const [showTeamWaModal, setShowTeamWaModal] = useState(false);
+  const [teamWaScope, setTeamWaScope] = useState('today'); // 'today' | 'overall'
+  const [copiedWa, setCopiedWa] = useState(false);
+
+  
+  const generateTeamWhatsAppText = (d, scope = 'today') => {
+    const teamName = (d && d.team && d.team.name) || (user && user.teamId ? (user.teamId.name || 'My Team') : 'My Team');
+    const isToday = scope === 'today';
+    const now = new Date();
+    const todayStr = now.toLocaleDateString('en-GB'); // DD/MM/YYYY
+
+    const members = (d && d.memberProgress) || (d && d.team && d.team.members) || [];
+
+    let text = isToday
+      ? `📅 ${todayStr} (Today)\n🏷️ *${teamName}*\n\n`
+      : `🏆 *Overall Campaign*\n🏷️ *${teamName}*\n\n`;
+
+    text += `*Name*          *Cash*\n──────────────────────\n`;
+
+    let totalCash = 0;
+    let totalDists = 0;
+
+    if (members && members.length > 0) {
+      members.forEach((m) => {
+        const cash = isToday ? (m.todayCollected !== undefined ? m.todayCollected : 0) : (m.collected || 0);
+        const dists = isToday ? (m.todayDistributed !== undefined ? m.todayDistributed : 0) : (m.distributed || 0);
+        totalCash += cash;
+        totalDists += dists;
+        const rawName = m.fullName || m.name || 'Member';
+        const padding = ' '.repeat(Math.max(2, 14 - rawName.length));
+        text += `${rawName}${padding}₹${cash.toLocaleString('en-IN')}\n`;
+      });
+    } else {
+      const leaderCash = isToday
+        ? (d && d.summary ? d.summary.todayCollected || 0 : 0)
+        : (d && d.summary ? d.summary.totalCollected || 0 : 0);
+      totalCash = leaderCash;
+      text += `${user.fullName}        ₹${leaderCash.toLocaleString('en-IN')}\n`;
+    }
+
+    text += `──────────────────────\n`;
+    text += `*Total Cash:*   ₹${totalCash.toLocaleString('en-IN')}\n`;
+
+    if (totalDists > 0 || (d && d.totalDistributed)) {
+      const units = isToday
+        ? totalDists
+        : (d && d.totalDistributed ? d.totalDistributed : totalDists);
+      text += `*Calendars Sold:* ${units} units\n`;
+    }
+    text += `\n_Markazul Hidayathil Islamiyya_`;
+    return text;
+  };
+
+  const handleShareWhatsAppAction = () => {
+    const text = generateTeamWhatsAppText(data, teamWaScope);
+    try {
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(text).catch(() => {});
+      }
+    } catch (_) {}
+    if (window.showToast) window.showToast('Text copied to clipboard! Opening WhatsApp...', 'success');
+    const url = `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`;
+    const a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
+  const handleCopyWhatsAppAction = () => {
+    const text = generateTeamWhatsAppText(data, teamWaScope);
+    try {
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(text);
+      }
+      setCopiedWa(true);
+      setTimeout(() => setCopiedWa(false), 2500);
+      if (window.showToast) window.showToast('Report copied to clipboard! Ready to paste into WhatsApp. ✓', 'success');
+    } catch (_) {
+      if (window.showToast) window.showToast('Failed to copy to clipboard.', 'error');
+    }
+  };
 
   const loadDashboard = async () => {
     if (!user) return;
@@ -441,7 +525,7 @@ export default function Dashboard() {
             type="button"
             class="btn btn-outline btn-full"
             style="color: #15803d; border-color: #86efac; background: #f0fdf4; font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 6px;"
-            onClick=${() => handleShareTeamWhatsApp(d)}
+            onClick=${() => setShowTeamWaModal(true)}
           >
             <span>📲</span>
             <span>Share Team Member Cash to WhatsApp</span>
@@ -612,6 +696,73 @@ export default function Dashboard() {
             </div>
             <div style="height: 8px; background: #e2e8f0; border-radius: 4px; overflow: hidden;">
               <div style="height: 100%; width: ${Math.min(100, d.teamTargetSummary.progressPercent)}%; background: linear-gradient(90deg, #0891b2, #10b981);"></div>
+            </div>
+          </div>
+        ` : ''}
+
+        
+        <!-- SHARE TEAM WHATSAPP MODAL (TODAY vs OVERALL) -->
+        ${showTeamWaModal ? html`
+          <div class="modal-overlay" style="z-index: 9999;" onClick=${(e) => { if (e.target === e.currentTarget) setShowTeamWaModal(false); }}>
+            <div class="modal" onClick=${(e) => e.stopPropagation()} style="max-width: 500px;">
+              <div class="modal-header">
+                <div class="modal-title">📲 Share Team Member Cash to WhatsApp</div>
+                <button onClick=${() => setShowTeamWaModal(false)} style="background: none; border: none; font-size: 18px; cursor: pointer;">✕</button>
+              </div>
+
+              <!-- Two Options: Today vs Overall -->
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px;">
+                <button
+                  type="button"
+                  class="btn ${teamWaScope === 'today' ? 'btn-primary' : 'btn-secondary'}"
+                  style="font-weight: 700; font-size: 13px; padding: 10px;"
+                  onClick=${() => setTeamWaScope('today')}
+                >
+                  📅 Today
+                </button>
+                <button
+                  type="button"
+                  class="btn ${teamWaScope === 'overall' ? 'btn-primary' : 'btn-secondary'}"
+                  style="font-weight: 700; font-size: 13px; padding: 10px;"
+                  onClick=${() => setTeamWaScope('overall')}
+                >
+                  🏆 Overall
+                </button>
+              </div>
+
+              <!-- Live Preview -->
+              <div style="margin-bottom: 14px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                  <span style="font-weight: 700; font-size: 12px; color: var(--text-secondary);">
+                    Report Preview (${teamWaScope === 'today' ? "Today's Collection" : "Overall Campaign Total"}):
+                  </span>
+                  <span class="badge ${teamWaScope === 'today' ? 'badge-success' : 'badge-info'}" style="font-size: 11px;">
+                    ${teamWaScope === 'today' ? '📅 Today' : '🏆 Cumulative'}
+                  </span>
+                </div>
+                <pre style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; font-family: monospace; font-size: 12.5px; white-space: pre-wrap; line-height: 1.45; color: #0f172a; max-height: 220px; overflow-y: auto;">${generateTeamWhatsAppText(data, teamWaScope)}</pre>
+              </div>
+
+              <!-- Actions -->
+              <div style="display: flex; gap: 8px;">
+                <button
+                  type="button"
+                  class="btn btn-primary"
+                  style="flex: 1; background: #16a34a; border-color: #16a34a; font-weight: 700; font-size: 13px; display: flex; align-items: center; justify-content: center; gap: 6px;"
+                  onClick=${handleShareWhatsAppAction}
+                >
+                  <span>🚀</span>
+                  <span>Share on WhatsApp</span>
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-secondary"
+                  style="font-weight: 700; font-size: 13px; display: flex; align-items: center; gap: 4px;"
+                  onClick=${handleCopyWhatsAppAction}
+                >
+                  <span>${copiedWa ? '✓ Copied' : '📋 Copy Text'}</span>
+                </button>
+              </div>
             </div>
           </div>
         ` : ''}

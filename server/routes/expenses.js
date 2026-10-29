@@ -117,4 +117,120 @@ router.post('/', async (req, res) => {
   }
 });
 
+
+// PUT /api/expenses/:id - Edit expense entry
+router.put('/:id', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { category, description, amount, date } = req.body;
+
+    const expense = await Expense.findById(id);
+    if (!expense) {
+      return res.status(404).json({ success: false, error: 'Expense record not found.' });
+    }
+
+    const isSuperOrUsthad = ['super_admin', 'usthad'].includes(req.user.role);
+    const isTeamLeader = req.user.role === 'team_leader';
+    const isOwner = expense.createdBy && expense.createdBy.toString() === req.user._id.toString();
+
+    if (!isSuperOrUsthad && !isOwner) {
+      if (isTeamLeader) {
+        const leaderTeamId = req.user.teamId ? (req.user.teamId._id || req.user.teamId).toString() : null;
+        const expTeamId = expense.teamId ? (expense.teamId._id || expense.teamId).toString() : null;
+        if (!leaderTeamId || leaderTeamId !== expTeamId) {
+          return res.status(403).json({ success: false, error: 'You may only edit expenses within your team.' });
+        }
+      } else {
+        return res.status(403).json({ success: false, error: 'Permission denied to edit this expense.' });
+      }
+    }
+
+    const oldValues = expense.toObject();
+
+    if (category !== undefined) {
+      if (!allowedCategories.includes(category)) {
+        return res.status(400).json({ success: false, error: 'Select a valid expense category.' });
+      }
+      expense.category = category;
+    }
+    if (description !== undefined) {
+      if (typeof description !== 'string' || !description.trim()) {
+        return res.status(400).json({ success: false, error: 'Description is required.' });
+      }
+      expense.description = description.trim();
+    }
+    if (amount !== undefined) {
+      const val = Number(amount);
+      if (!Number.isFinite(val) || val <= 0) {
+        return res.status(400).json({ success: false, error: 'Amount must be greater than zero.' });
+      }
+      expense.amount = val;
+    }
+    if (date !== undefined) {
+      const d = new Date(date);
+      if (!Number.isNaN(d.getTime())) expense.date = d;
+    }
+
+    await expense.save();
+
+    await logAudit({
+      entityType: 'expense',
+      entityId: expense._id,
+      action: 'edit',
+      oldValues: { amount: oldValues.amount, category: oldValues.category, description: oldValues.description },
+      newValues: { amount: expense.amount, category: expense.category, description: expense.description },
+      performedBy: req.user._id,
+      ipAddress: req.ip
+    });
+
+    return res.json({ success: true, data: expense, message: 'Expense updated successfully.' });
+  } catch (err) {
+    console.error('Edit expense error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to update expense.' });
+  }
+});
+
+// DELETE /api/expenses/:id - Delete expense entry
+router.delete('/:id', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const expense = await Expense.findById(id);
+    if (!expense) {
+      return res.status(404).json({ success: false, error: 'Expense record not found.' });
+    }
+
+    const isSuperOrUsthad = ['super_admin', 'usthad'].includes(req.user.role);
+    const isTeamLeader = req.user.role === 'team_leader';
+    const isOwner = expense.createdBy && expense.createdBy.toString() === req.user._id.toString();
+
+    if (!isSuperOrUsthad && !isOwner) {
+      if (isTeamLeader) {
+        const leaderTeamId = req.user.teamId ? (req.user.teamId._id || req.user.teamId).toString() : null;
+        const expTeamId = expense.teamId ? (expense.teamId._id || expense.teamId).toString() : null;
+        if (!leaderTeamId || leaderTeamId !== expTeamId) {
+          return res.status(403).json({ success: false, error: 'You may only delete expenses within your team.' });
+        }
+      } else {
+        return res.status(403).json({ success: false, error: 'Permission denied to delete this expense.' });
+      }
+    }
+
+    await Expense.findByIdAndDelete(id);
+
+    await logAudit({
+      entityType: 'expense',
+      entityId: id,
+      action: 'delete',
+      oldValues: { amount: expense.amount, description: expense.description },
+      performedBy: req.user._id,
+      ipAddress: req.ip
+    });
+
+    return res.json({ success: true, message: 'Expense deleted successfully.' });
+  } catch (err) {
+    console.error('Delete expense error:', err);
+    return res.status(500).json({ success: false, error: 'Failed to delete expense.' });
+  }
+});
+
 export default router;
